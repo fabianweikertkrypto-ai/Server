@@ -225,18 +225,19 @@ async function restoreFromBackup(backupTimestamp) {
 async function loadLatestBackupOnStartup() {
     try {
         const backupDir = 'backups';
-		const files = await fs.readdir(backupDir);
-		
-		console.log(`Gefundene Dateien im Backup-Ordner: ${files.length}`);
+        // GEÄNDERT: backupFiles statt files verwenden
+        const backupFiles = await fs.readdir(backupDir);
+        
+        console.log(`Gefundene Dateien im Backup-Ordner: ${backupFiles.length}`);
 
-			// DEBUG: Alle Dateien ausgeben
-			console.log('=== ALLE DATEIEN ===');
-			files.forEach(file => {
-				console.log(`Datei: ${file}`);
-			});
-			console.log('==================');
-		
-		console.log('=== BACKUP PATH DEBUG ===');
+        // DEBUG: Alle Dateien ausgeben
+        console.log('=== ALLE DATEIEN ===');
+        backupFiles.forEach(file => {
+            console.log(`Datei: ${file}`);
+        });
+        console.log('==================');
+        
+        console.log('=== BACKUP PATH DEBUG ===');
         console.log('Current working directory:', process.cwd());
         console.log('__dirname:', __dirname);
         console.log('Looking for backups in:', path.resolve(backupDir));
@@ -253,14 +254,14 @@ async function loadLatestBackupOnStartup() {
             return false;
         }
         
-        // Get all backup files
-        const files = await fs.readdir(backupDir);
-        console.log(`📄 Gefundene Dateien im Backup-Ordner: ${files.length}`);
+        // Get all backup files - GEÄNDERT: directoryFiles statt files
+        const directoryFiles = await fs.readdir(backupDir);
+        console.log(`📄 Gefundene Dateien im Backup-Ordner: ${directoryFiles.length}`);
         
         // Filter and parse backup files
-        const backupFiles = [];
+        const validBackupFiles = [];
         
-        for (const file of files) {
+        for (const file of directoryFiles) {
             if (file.endsWith('.json')) {
                 console.log(`🔍 Prüfe Datei: ${file}`);
                 
@@ -274,11 +275,11 @@ async function loadLatestBackupOnStartup() {
                 }
                 
                 if (timestamp) {
-                    const existing = backupFiles.find(bf => bf.timestamp === timestamp);
+                    const existing = validBackupFiles.find(bf => bf.timestamp === timestamp);
                     if (existing) {
                         existing.files.push(file);
                     } else {
-                        backupFiles.push({
+                        validBackupFiles.push({
                             timestamp: timestamp,
                             files: [file]
                         });
@@ -288,20 +289,20 @@ async function loadLatestBackupOnStartup() {
             }
         }
         
-        console.log(`📊 Gefundene Backup-Gruppen: ${backupFiles.length}`);
+        console.log(`📊 Gefundene Backup-Gruppen: ${validBackupFiles.length}`);
         
-        if (backupFiles.length === 0) {
+        if (validBackupFiles.length === 0) {
             console.log('📁 Keine Backup-Dateien gefunden, verwende Standard-Datenbanken');
             return false;
         }
         
         // Sort by timestamp (newest first)
-        backupFiles.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+        validBackupFiles.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
         
         console.log('🔍 Suche nach vollständigstem Backup...');
         
         // Find the most recent complete backup (having both files)
-        for (const backup of backupFiles) {
+        for (const backup of validBackupFiles) {
             console.log(`⏰ Prüfe Backup-Gruppe: ${backup.timestamp}`);
             console.log(`📄 Dateien: ${backup.files.join(', ')}`);
             
