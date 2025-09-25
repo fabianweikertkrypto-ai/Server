@@ -15,7 +15,7 @@ const corsOptions = {
         'http://localhost:3000',
         'http://localhost:8080', 
         'https://frabjous-parfait-09c9dc.netlify.app',
-        'https://your-custom-domain.com' // falls vorhanden
+        'https://msigaminguniverse.com/' // falls vorhanden
     ],
     credentials: true,
     optionsSuccessStatus: 200
