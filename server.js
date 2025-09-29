@@ -917,6 +917,562 @@ app.post('/games/tiktaktoe/matches/:matchId/move', async (req, res) => {
     }
 });
 
+app.get('/games/chess/matches/my-active', async (req, res) => {
+    try {
+        const { walletAddress } = req.query;
+        
+        if (!walletAddress) {
+            return res.status(400).json({ error: 'Wallet-Adresse erforderlich' });
+        }
+        
+        const gamesData = await readGames();
+        
+        // Find active chess tournament
+        for (const [tournamentId, tournament] of Object.entries(gamesData.games.chess.tournaments)) {
+            if (tournament.status === 'started' && tournament.bracket?.rounds) {
+                for (const round of tournament.bracket.rounds) {
+                    for (const match of round) {
+                        if (match.status === 'pending' && 
+                            (match.player1.walletAddress.toLowerCase() === walletAddress.toLowerCase() || 
+                             match.player2.walletAddress.toLowerCase() === walletAddress.toLowerCase())) {
+                            return res.json({
+                                match: match,
+                                tournamentId: tournamentId,
+                                tournament: tournament
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        
+        res.status(404).json({ error: 'Kein aktives Match gefunden' });
+        
+    } catch (error) {
+        console.error('Error finding active chess match:', error);
+        res.status(500).json({ error: 'Interner Serverfehler' });
+    }
+});
+
+// Make chess move
+app.post('/games/chess/matches/:matchId/move', async (req, res) => {
+    try {
+        const { matchId } = req.params;
+        const { from, to, walletAddress, promotion } = req.body;
+        
+        const gamesData = await readGames();
+        let targetMatch = null;
+        let tournamentId = null;
+        
+        // Find match
+        for (const [tId, tournament] of Object.entries(gamesData.games.chess.tournaments)) {
+            if (tournament.bracket?.rounds) {
+                for (const round of tournament.bracket.rounds) {
+                    const match = round.find(m => m.id === matchId);
+                    if (match) {
+                        targetMatch = match;
+                        tournamentId = tId;
+                        break;
+                    }
+                }
+            }
+            if (targetMatch) break;
+        }
+        
+        if (!targetMatch) {
+            return res.status(404).json({ error: 'Match nicht gefunden' });
+        }
+        
+        if (targetMatch.status === 'completed') {
+            return res.status(400).json({ error: 'Match bereits beendet' });
+        }
+        
+        // Initialize game state if not exists
+        if (!targetMatch.gameState) {
+            targetMatch.gameState = initializeChessBoard();
+            targetMatch.gameState.players = {
+                white: targetMatch.player1,
+                black: targetMatch.player2
+            };
+        }
+        
+        const gameState = targetMatch.gameState;
+        const playerAddress = walletAddress.toLowerCase();
+        
+        // Determine player color
+        const isWhite = gameState.players.white.walletAddress.toLowerCase() === playerAddress;
+        const myColor = isWhite ? 'white' : 'black';
+        
+        // Validate turn
+        if (gameState.currentPlayer !== myColor) {
+            return res.status(400).json({ error: 'Nicht dein Zug' });
+        }
+        
+        // Validate and make move
+        const moveResult = makeChessMove(gameState, from, to, promotion);
+        
+        if (!moveResult.valid) {
+            return res.status(400).json({ error: moveResult.error || 'Ungültiger Zug' });
+        }
+        
+        // Record move
+        gameState.moves.push({
+            from: from,
+            to: to,
+            piece: moveResult.piece,
+            captured: moveResult.captured,
+            promotion: promotion,
+            player: myColor,
+            timestamp: new Date().toISOString()
+        });
+        
+        // Switch player
+        gameState.currentPlayer = myColor === 'white' ? 'black' : 'white';
+        
+        // Check game end conditions
+        const gameEndCheck = checkChessGameEnd(gameState);
+        
+        if (gameEndCheck.ended) {
+            targetMatch.status = 'completed';
+            targetMatch.completedAt = new Date().toISOString();
+            targetMatch.gameResult = gameEndCheck.result;
+            
+            if (gameEndCheck.winner) {
+                targetMatch.winner = gameEndCheck.winner === 'white' ? 
+                    targetMatch.player1 : targetMatch.player2;
+            }
+            
+            // Advance tournament
+            await checkAndAdvanceRound(gamesData, 'chess', tournamentId, 
+                gamesData.games.chess.tournaments[tournamentId].bracket.currentRound - 1);
+        }
+        
+        await writeGames(gamesData);
+        
+        res.json({
+            success: true,
+            gameState: targetMatch.gameState,
+            status: targetMatch.status,
+            winner: targetMatch.winner
+        });
+        
+    } catch (error) {
+        console.error('Error making chess move:', error);
+        res.status(500).json({ error: 'Interner Serverfehler' });
+    }
+});
+
+// Get chess match state
+app.get('/games/chess/matches/:matchId/state', async (req, res) => {
+    try {
+        const { matchId } = req.params;
+        const gamesData = await readGames();
+        let targetMatch = null;
+        
+        for (const tournament of Object.values(gamesData.games.chess.tournaments)) {
+            if (tournament.bracket?.rounds) {
+                for (const round of tournament.bracket.rounds) {
+                    const match = round.find(m => m.id === matchId);
+                    if (match) {
+                        targetMatch = match;
+                        break;
+                    }
+                }
+            }
+            if (targetMatch) break;
+        }
+        
+        if (!targetMatch) {
+            return res.status(404).json({ error: 'Match nicht gefunden' });
+        }
+        
+        // Initialize if needed
+        if (!targetMatch.gameState) {
+            targetMatch.gameState = initializeChessBoard();
+            targetMatch.gameState.players = {
+                white: targetMatch.player1,
+                black: targetMatch.player2
+            };
+            await writeGames(gamesData);
+        }
+        
+        res.json({
+            gameState: targetMatch.gameState,
+            status: targetMatch.status,
+            winner: targetMatch.winner,
+            player1: targetMatch.player1,
+            player2: targetMatch.player2
+        });
+        
+    } catch (error) {
+        console.error('Error getting chess state:', error);
+        res.status(500).json({ error: 'Interner Serverfehler' });
+    }
+});
+
+// Helper: Initialize chess board
+function initializeChessBoard() {
+    const board = Array(8).fill(null).map(() => Array(8).fill(null));
+    
+    // Setup pieces
+    const pieces = ['rook', 'knight', 'bishop', 'queen', 'king', 'bishop', 'knight', 'rook'];
+    
+    pieces.forEach((piece, col) => {
+        board[0][col] = { type: piece, color: 'b' };
+        board[7][col] = { type: piece, color: 'w' };
+    });
+    
+    for (let col = 0; col < 8; col++) {
+        board[1][col] = { type: 'pawn', color: 'b' };
+        board[6][col] = { type: 'pawn', color: 'w' };
+    }
+    
+    return {
+        board: board,
+        currentPlayer: 'white',
+        moves: [],
+        castlingRights: {
+            white: { kingside: true, queenside: true },
+            black: { kingside: true, queenside: true }
+        },
+        enPassantTarget: null,
+        startedAt: new Date().toISOString()
+    };
+}
+
+// Helper: Make chess move (simplified validation)
+function makeChessMove(gameState, from, to, promotion) {
+    const [fromRow, fromCol] = from;
+    const [toRow, toCol] = to;
+    
+    // Validate coordinates
+    if (!isValidCoordinate(fromRow, fromCol) || !isValidCoordinate(toRow, toCol)) {
+        return { valid: false, error: 'Ungültige Koordinaten' };
+    }
+    
+    const piece = gameState.board[fromRow][fromCol];
+    
+    if (!piece) {
+        return { valid: false, error: 'Kein Stein an dieser Position' };
+    }
+    
+    const colorPrefix = piece.color === 'w' ? 'white' : 'black';
+    if (gameState.currentPlayer !== colorPrefix) {
+        return { valid: false, error: 'Nicht dein Zug' };
+    }
+    
+    // Validate move for piece type
+    if (!isValidPieceMove(gameState, piece, fromRow, fromCol, toRow, toCol)) {
+        return { valid: false, error: 'Ungültiger Zug für diese Figur' };
+    }
+    
+    // Check if path is blocked (except knight)
+    if (piece.type !== 'knight' && isPathBlocked(gameState.board, fromRow, fromCol, toRow, toCol)) {
+        return { valid: false, error: 'Weg ist blockiert' };
+    }
+    
+    // Check if capturing own piece
+    const targetPiece = gameState.board[toRow][toCol];
+    if (targetPiece && targetPiece.color === piece.color) {
+        return { valid: false, error: 'Kann eigene Figur nicht schlagen' };
+    }
+    
+    // Simulate move to check if king would be in check
+    const simulatedBoard = JSON.parse(JSON.stringify(gameState.board));
+    simulatedBoard[toRow][toCol] = piece;
+    simulatedBoard[fromRow][fromCol] = null;
+    
+    if (isKingInCheck(simulatedBoard, piece.color)) {
+        return { valid: false, error: 'Zug würde eigenen König in Schach setzen' };
+    }
+    
+    // Make move
+    const captured = gameState.board[toRow][toCol];
+    gameState.board[toRow][toCol] = piece;
+    gameState.board[fromRow][fromCol] = null;
+    
+    // Handle pawn promotion
+    if (piece.type === 'pawn' && (toRow === 0 || toRow === 7)) {
+        if (!promotion || !['queen', 'rook', 'bishop', 'knight'].includes(promotion)) {
+            promotion = 'queen'; // Default
+        }
+        gameState.board[toRow][toCol].type = promotion;
+    }
+    
+    // Update castling rights if king or rook moved
+    if (piece.type === 'king') {
+        gameState.castlingRights[colorPrefix].kingside = false;
+        gameState.castlingRights[colorPrefix].queenside = false;
+    }
+    if (piece.type === 'rook') {
+        if (fromCol === 0) gameState.castlingRights[colorPrefix].queenside = false;
+        if (fromCol === 7) gameState.castlingRights[colorPrefix].kingside = false;
+    }
+    
+    return {
+        valid: true,
+        piece: piece.type,
+        captured: captured?.type
+    };
+}
+
+function isValidCoordinate(row, col) {
+    return row >= 0 && row < 8 && col >= 0 && col < 8;
+}
+
+function isValidPieceMove(gameState, piece, fromRow, fromCol, toRow, toCol) {
+    const rowDiff = Math.abs(toRow - fromRow);
+    const colDiff = Math.abs(toCol - fromCol);
+    const rowDir = toRow - fromRow;
+    const colDir = toCol - fromCol;
+    
+    switch (piece.type) {
+        case 'pawn':
+            const direction = piece.color === 'w' ? -1 : 1;
+            const startRow = piece.color === 'w' ? 6 : 1;
+            
+            // Move forward
+            if (colDir === 0 && rowDir === direction && !gameState.board[toRow][toCol]) {
+                return true;
+            }
+            // Initial two-square move
+            if (colDir === 0 && rowDir === 2 * direction && fromRow === startRow && 
+                !gameState.board[toRow][toCol] && !gameState.board[fromRow + direction][fromCol]) {
+                return true;
+            }
+            // Capture diagonally
+            if (Math.abs(colDir) === 1 && rowDir === direction && gameState.board[toRow][toCol]) {
+                return true;
+            }
+            return false;
+            
+        case 'knight':
+            return (rowDiff === 2 && colDiff === 1) || (rowDiff === 1 && colDiff === 2);
+            
+        case 'bishop':
+            return rowDiff === colDiff && rowDiff > 0;
+            
+        case 'rook':
+            return (rowDiff > 0 && colDiff === 0) || (rowDiff === 0 && colDiff > 0);
+            
+        case 'queen':
+            return (rowDiff === colDiff && rowDiff > 0) || 
+                   (rowDiff > 0 && colDiff === 0) || 
+                   (rowDiff === 0 && colDiff > 0);
+            
+        case 'king':
+            return rowDiff <= 1 && colDiff <= 1 && (rowDiff > 0 || colDiff > 0);
+            
+        default:
+            return false;
+    }
+}
+
+function isPathBlocked(board, fromRow, fromCol, toRow, toCol) {
+    const rowStep = toRow > fromRow ? 1 : (toRow < fromRow ? -1 : 0);
+    const colStep = toCol > fromCol ? 1 : (toCol < fromCol ? -1 : 0);
+    
+    let currentRow = fromRow + rowStep;
+    let currentCol = fromCol + colStep;
+    
+    while (currentRow !== toRow || currentCol !== toCol) {
+        if (board[currentRow][currentCol]) {
+            return true;
+        }
+        currentRow += rowStep;
+        currentCol += colStep;
+    }
+    
+    return false;
+}
+
+function isKingInCheck(board, color) {
+    // Find king position
+    let kingRow, kingCol;
+    for (let row = 0; row < 8; row++) {
+        for (let col = 0; col < 8; col++) {
+            const piece = board[row][col];
+            if (piece && piece.type === 'king' && piece.color === color) {
+                kingRow = row;
+                kingCol = col;
+                break;
+            }
+        }
+        if (kingRow !== undefined) break;
+    }
+    
+    if (kingRow === undefined) return true; // King not found (shouldn't happen)
+    
+    // Check if any opponent piece can attack king
+    const opponentColor = color === 'w' ? 'b' : 'w';
+    
+    for (let row = 0; row < 8; row++) {
+        for (let col = 0; col < 8; col++) {
+            const piece = board[row][col];
+            if (piece && piece.color === opponentColor) {
+                // Create temporary gameState for move validation
+                const tempState = { board: board };
+                if (isValidPieceMove(tempState, piece, row, col, kingRow, kingCol)) {
+                    if (piece.type === 'knight' || !isPathBlocked(board, row, col, kingRow, kingCol)) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    
+    return false;
+}
+
+function hasLegalMoves(gameState, color) {
+    for (let fromRow = 0; fromRow < 8; fromRow++) {
+        for (let fromCol = 0; fromCol < 8; fromCol++) {
+            const piece = gameState.board[fromRow][fromCol];
+            if (piece && piece.color === color) {
+                for (let toRow = 0; toRow < 8; toRow++) {
+                    for (let toCol = 0; toCol < 8; toCol++) {
+                        if (isValidPieceMove(gameState, piece, fromRow, fromCol, toRow, toCol)) {
+                            // Check path
+                            if (piece.type === 'knight' || !isPathBlocked(gameState.board, fromRow, fromCol, toRow, toCol)) {
+                                // Check target square
+                                const targetPiece = gameState.board[toRow][toCol];
+                                if (!targetPiece || targetPiece.color !== color) {
+                                    // Simulate move
+                                    const simulatedBoard = JSON.parse(JSON.stringify(gameState.board));
+                                    simulatedBoard[toRow][toCol] = piece;
+                                    simulatedBoard[fromRow][fromCol] = null;
+                                    
+                                    if (!isKingInCheck(simulatedBoard, color)) {
+                                        return true; // Found legal move
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return false;
+}
+
+// Helper: Check game end (updated)
+function checkChessGameEnd(gameState) {
+    const currentColor = gameState.currentPlayer === 'white' ? 'w' : 'b';
+    const isInCheck = isKingInCheck(gameState.board, currentColor);
+    const hasLegalMovesAvailable = hasLegalMoves(gameState, currentColor);
+    
+    if (!hasLegalMovesAvailable) {
+        if (isInCheck) {
+            // Checkmate
+            const winner = gameState.currentPlayer === 'white' ? 'black' : 'white';
+            return { 
+                ended: true, 
+                result: 'checkmate', 
+                winner: winner 
+            };
+        } else {
+            // Stalemate
+            return { 
+                ended: true, 
+                result: 'stalemate', 
+                winner: null 
+            };
+        }
+    }
+    
+    // Check for insufficient material
+    if (isInsufficientMaterial(gameState.board)) {
+        return { 
+            ended: true, 
+            result: 'insufficient_material', 
+            winner: null 
+        };
+    }
+    
+    // Check 50-move rule (no capture or pawn move)
+    if (gameState.moves.length >= 100) {
+        let lastCapture = -1;
+        let lastPawnMove = -1;
+        
+        for (let i = gameState.moves.length - 1; i >= 0; i--) {
+            if (gameState.moves[i].captured) {
+                lastCapture = i;
+                break;
+            }
+            if (gameState.moves[i].piece === 'pawn') {
+                lastPawnMove = i;
+                break;
+            }
+        }
+        
+        const movesSinceProgress = gameState.moves.length - Math.max(lastCapture, lastPawnMove);
+        if (movesSinceProgress >= 100) {
+            return { 
+                ended: true, 
+                result: 'fifty_move_rule', 
+                winner: null 
+            };
+        }
+    }
+    
+    return { ended: false };
+}
+
+function isInsufficientMaterial(board) {
+    const pieces = [];
+    
+    for (let row = 0; row < 8; row++) {
+        for (let col = 0; col < 8; col++) {
+            if (board[row][col]) {
+                pieces.push(board[row][col]);
+            }
+        }
+    }
+    
+    // King vs King
+    if (pieces.length === 2) return true;
+    
+    // King + minor piece vs King
+    if (pieces.length === 3) {
+        const minorPieces = pieces.filter(p => p.type === 'bishop' || p.type === 'knight');
+        if (minorPieces.length === 1) return true;
+    }
+    
+    return false;
+}
+
+// Helper: Check game end
+function checkChessGameEnd(gameState) {
+    // Simplified - just check for king capture
+    let whiteKing = false;
+    let blackKing = false;
+    
+    for (let row = 0; row < 8; row++) {
+        for (let col = 0; col < 8; col++) {
+            const piece = gameState.board[row][col];
+            if (piece?.type === 'king') {
+                if (piece.color === 'w') whiteKing = true;
+                if (piece.color === 'b') blackKing = true;
+            }
+        }
+    }
+    
+    if (!whiteKing) {
+        return { ended: true, result: 'black_wins', winner: 'black' };
+    }
+    if (!blackKing) {
+        return { ended: true, result: 'white_wins', winner: 'white' };
+    }
+    
+    // Check for 50 moves without capture (simplified)
+    if (gameState.moves.length > 100) {
+        return { ended: true, result: 'draw', winner: null };
+    }
+    
+    return { ended: false };
+}
+
 // Get TikTakToe match state
 app.get('/games/tiktaktoe/matches/:matchId/state', async (req, res) => {
     try {
