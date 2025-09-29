@@ -1526,6 +1526,120 @@ function checkTikTakToeWinner(board) {
     return null;
 }
 
+app.post('/games/tiktaktoe/matches/:matchId/move', async (req, res) => {
+    try {
+        const { matchId } = req.params;
+        const { position, walletAddress } = req.body;
+        
+        if (position === undefined || !walletAddress) {
+            return res.status(400).json({ error: 'Position und Wallet-Adresse erforderlich' });
+        }
+        
+        const gamesData = await readGames();
+        let targetMatch = null;
+        let tournamentId = null;
+        
+        // Find match
+        for (const [tId, tournament] of Object.entries(gamesData.games.tiktaktoe.tournaments)) {
+            if (tournament.bracket?.rounds) {
+                for (const round of tournament.bracket.rounds) {
+                    const match = round.find(m => m.id === matchId);
+                    if (match) {
+                        targetMatch = match;
+                        tournamentId = tId;
+                        break;
+                    }
+                }
+            }
+            if (targetMatch) break;
+        }
+        
+        if (!targetMatch) {
+            return res.status(404).json({ error: 'Match nicht gefunden' });
+        }
+        
+        if (targetMatch.status === 'completed') {
+            return res.status(400).json({ error: 'Match bereits beendet' });
+        }
+        
+        // Initialize game state if not exists
+        if (!targetMatch.gameState) {
+            targetMatch.gameState = {
+                board: Array(25).fill(null),
+                currentPlayer: targetMatch.player1.walletAddress.toLowerCase(),
+                moves: [],
+                startedAt: new Date().toISOString()
+            };
+        }
+        
+        const gameState = targetMatch.gameState;
+        const playerAddress = walletAddress.toLowerCase();
+        
+        // Validate turn
+        if (gameState.currentPlayer !== playerAddress) {
+            return res.status(400).json({ error: 'Nicht dein Zug' });
+        }
+        
+        // Validate position
+        if (position < 0 || position >= 25 || gameState.board[position] !== null) {
+            return res.status(400).json({ error: 'Ungültige Position' });
+        }
+        
+        // Determine symbol
+        const isPlayer1 = targetMatch.player1.walletAddress.toLowerCase() === playerAddress;
+        const symbol = isPlayer1 ? 'X' : 'O';
+        
+        // Make move
+        gameState.board[position] = symbol;
+        gameState.moves.push({
+            position: position,
+            symbol: symbol,
+            player: playerAddress,
+            timestamp: new Date().toISOString()
+        });
+        
+        // Check for winner
+        const winner = checkTikTakToeWinner(gameState.board);
+        
+        if (winner) {
+            const winnerPlayer = winner === 'X' ? targetMatch.player1 : targetMatch.player2;
+            targetMatch.winner = winnerPlayer;
+            targetMatch.status = 'completed';
+            targetMatch.completedAt = new Date().toISOString();
+            
+            // Advance tournament
+            await checkAndAdvanceRound(gamesData, 'tiktaktoe', tournamentId, 
+                gamesData.games.tiktaktoe.tournaments[tournamentId].bracket.currentRound - 1);
+        } else if (gameState.board.every(cell => cell !== null)) {
+            // Draw - restart game
+            targetMatch.gameState = {
+                board: Array(25).fill(null),
+                currentPlayer: targetMatch.player1.walletAddress.toLowerCase(),
+                moves: [],
+                startedAt: new Date().toISOString()
+            };
+        } else {
+            // Switch player
+            gameState.currentPlayer = isPlayer1 ? 
+                targetMatch.player2.walletAddress.toLowerCase() : 
+                targetMatch.player1.walletAddress.toLowerCase();
+        }
+        
+        await writeGames(gamesData);
+        
+        res.json({
+            success: true,
+            gameState: targetMatch.gameState,
+            status: targetMatch.status,
+            winner: targetMatch.winner
+        });
+        
+    } catch (error) {
+        console.error('Error making TikTakToe move:', error);
+        res.status(500).json({ error: 'Interner Serverfehler' });
+    }
+});
+
 // Register for tournament
 app.post('/games/:gameId/tournaments/:tournamentId/register', async (req, res) => {
     try {
