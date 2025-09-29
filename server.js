@@ -859,7 +859,7 @@ app.post('/games/tiktaktoe/matches/:matchId/move', async (req, res) => {
         }
         
         // Validate position
-        if (position < 0 || position > 8 || gameState.board[position] !== null) {
+        if (position < 0 || position > 24 || gameState.board[position] !== null) {
             return res.status(400).json({ error: 'Ungültiger Zug' });
         }
         
@@ -944,7 +944,7 @@ app.get('/games/tiktaktoe/matches/:matchId/state', async (req, res) => {
         // Initialize game state if not exists
         if (!targetMatch.gameState) {
             targetMatch.gameState = {
-                board: Array(9).fill(null),
+                board: Array(25).fill(null),
                 currentPlayer: targetMatch.player1.walletAddress.toLowerCase(),
                 moves: [],
                 startedAt: new Date().toISOString()
