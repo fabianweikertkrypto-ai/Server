@@ -843,7 +843,7 @@ app.post('/games/tiktaktoe/matches/:matchId/move', async (req, res) => {
         // Initialize game state if not exists
         if (!targetMatch.gameState) {
             targetMatch.gameState = {
-                board: Array(9).fill(null),
+                board: Array(25).fill(null),  // 5x5 = 25 Felder
                 currentPlayer: targetMatch.player1.walletAddress.toLowerCase(),
                 moves: [],
                 startedAt: new Date().toISOString()
@@ -890,7 +890,7 @@ app.post('/games/tiktaktoe/matches/:matchId/move', async (req, res) => {
         } else if (gameState.board.every(cell => cell !== null)) {
             // Draw - restart game
             targetMatch.gameState = {
-                board: Array(9).fill(null),
+                board: Array(25).fill(null),
                 currentPlayer: targetMatch.player1.walletAddress.toLowerCase(),
                 moves: [],
                 startedAt: new Date().toISOString()
@@ -968,17 +968,58 @@ app.get('/games/tiktaktoe/matches/:matchId/state', async (req, res) => {
 
 // Helper function to check TikTakToe winner
 function checkTikTakToeWinner(board) {
-    const lines = [
-        [0, 1, 2], [3, 4, 5], [6, 7, 8], // rows
-        [0, 3, 6], [1, 4, 7], [2, 5, 8], // columns
-        [0, 4, 8], [2, 4, 6] // diagonals
-    ];
-    
-    for (const [a, b, c] of lines) {
-        if (board[a] && board[a] === board[b] && board[a] === board[c]) {
-            return board[a];
+    // Horizontal
+    for (let row = 0; row < 5; row++) {
+        for (let col = 0; col <= 1; col++) {
+            const start = row * 5 + col;
+            if (board[start] && 
+                board[start] === board[start + 1] && 
+                board[start] === board[start + 2] && 
+                board[start] === board[start + 3]) {
+                return board[start];
+            }
         }
     }
+    
+    // Vertikal
+    for (let col = 0; col < 5; col++) {
+        for (let row = 0; row <= 1; row++) {
+            const start = row * 5 + col;
+            if (board[start] && 
+                board[start] === board[start + 5] && 
+                board[start] === board[start + 10] && 
+                board[start] === board[start + 15]) {
+                return board[start];
+            }
+        }
+    }
+    
+    // Diagonal (oben-links nach unten-rechts)
+    for (let row = 0; row <= 1; row++) {
+        for (let col = 0; col <= 1; col++) {
+            const start = row * 5 + col;
+            if (board[start] && 
+                board[start] === board[start + 6] && 
+                board[start] === board[start + 12] && 
+                board[start] === board[start + 18]) {
+                return board[start];
+            }
+        }
+    }
+    
+    // Diagonal (oben-rechts nach unten-links)
+    for (let row = 0; row <= 1; row++) {
+        for (let col = 3; col < 5; col++) {
+            const start = row * 5 + col;
+            if (board[start] && 
+                board[start] === board[start + 4] && 
+                board[start] === board[start + 8] && 
+                board[start] === board[start + 12]) {
+                return board[start];
+            }
+        }
+    }
+    
     return null;
 }
 
