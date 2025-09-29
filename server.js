@@ -14,7 +14,7 @@ const corsOptions = {
     origin: [
         'http://localhost:3000',
         'http://localhost:8080', 
-        'https://frabjous-parfait-09c9dc.netlify.app',
+        'https://merry-klepon-890f17.netlify.app',
         'https://msigaminguniverse.com' // falls vorhanden
     ],
     credentials: true,
@@ -69,6 +69,12 @@ async function readGames() {
                 chess: {
                     id: 'chess',
                     name: 'Chess',
+                    tournaments: {},
+                    activeTournamentId: null
+                },
+                tiktaktoe: {
+                    id: 'tiktaktoe',
+                    name: 'TikTakToe',
                     tournaments: {},
                     activeTournamentId: null
                 }
@@ -464,7 +470,8 @@ app.post('/user/register', async (req, res) => {
                     gameStats: {
                         fifa: { tournaments: 0, wins: 0 },
                         cod: { tournaments: 0, wins: 0 },
-						chess: { tournaments: 0, wins: 0 }
+						chess: { tournaments: 0, wins: 0 },
+                        tiktaktoe: { tournaments: 0, wins: 0 } 
                     }
                 },
                 createdAt: now,
@@ -800,6 +807,180 @@ app.post('/games/chess/matches/:matchId/result', async (req, res) => {
     }
 });
 
+app.post('/games/tiktaktoe/matches/:matchId/move', async (req, res) => {
+    try {
+        const { matchId } = req.params;
+        const { position, walletAddress } = req.body;
+        
+        const gamesData = await readGames();
+        let targetMatch = null;
+        let tournamentId = null;
+        
+        // Find the match in active tiktaktoe tournaments
+        for (const [tId, tournament] of Object.entries(gamesData.games.tiktaktoe.tournaments)) {
+            if (tournament.bracket && tournament.bracket.rounds) {
+                for (const round of tournament.bracket.rounds) {
+                    const match = round.find(m => m.id === matchId);
+                    if (match) {
+                        targetMatch = match;
+                        tournamentId = tId;
+                        break;
+                    }
+                }
+            }
+            if (targetMatch) break;
+        }
+        
+        if (!targetMatch) {
+            return res.status(404).json({ error: 'Match nicht gefunden' });
+        }
+        
+        if (targetMatch.status === 'completed') {
+            return res.status(400).json({ error: 'Spiel bereits beendet' });
+        }
+        
+        // Initialize game state if not exists
+        if (!targetMatch.gameState) {
+            targetMatch.gameState = {
+                board: Array(9).fill(null),
+                currentPlayer: targetMatch.player1.walletAddress.toLowerCase(),
+                moves: [],
+                startedAt: new Date().toISOString()
+            };
+        }
+        
+        const gameState = targetMatch.gameState;
+        const playerAddress = walletAddress.toLowerCase();
+        
+        // Validate turn
+        if (gameState.currentPlayer !== playerAddress) {
+            return res.status(400).json({ error: 'Nicht dein Zug' });
+        }
+        
+        // Validate position
+        if (position < 0 || position > 8 || gameState.board[position] !== null) {
+            return res.status(400).json({ error: 'Ungültiger Zug' });
+        }
+        
+        // Determine player symbol
+        const isPlayer1 = playerAddress === targetMatch.player1.walletAddress.toLowerCase();
+        const symbol = isPlayer1 ? 'X' : 'O';
+        
+        // Make move
+        gameState.board[position] = symbol;
+        gameState.moves.push({
+            player: playerAddress,
+            symbol: symbol,
+            position: position,
+            timestamp: new Date().toISOString()
+        });
+        
+        // Check for winner
+        const winner = checkTikTakToeWinner(gameState.board);
+        if (winner) {
+            targetMatch.status = 'completed';
+            targetMatch.winner = winner === 'X' ? targetMatch.player1 : targetMatch.player2;
+            targetMatch.completedAt = new Date().toISOString();
+            targetMatch.gameResult = winner;
+            
+            // Advance tournament
+            await checkAndAdvanceRound(gamesData, 'tiktaktoe', tournamentId, 
+                gamesData.games.tiktaktoe.tournaments[tournamentId].bracket.currentRound - 1);
+        } else if (gameState.board.every(cell => cell !== null)) {
+            // Draw - restart game
+            targetMatch.gameState = {
+                board: Array(9).fill(null),
+                currentPlayer: targetMatch.player1.walletAddress.toLowerCase(),
+                moves: [],
+                startedAt: new Date().toISOString()
+            };
+        } else {
+            // Switch players
+            gameState.currentPlayer = isPlayer1 ? 
+                targetMatch.player2.walletAddress.toLowerCase() : 
+                targetMatch.player1.walletAddress.toLowerCase();
+        }
+        
+        await writeGames(gamesData);
+        
+        res.json({ 
+            message: 'Zug erfolgreich',
+            gameState: targetMatch.gameState,
+            status: targetMatch.status,
+            winner: targetMatch.winner
+        });
+        
+    } catch (error) {
+        console.error('Error making TikTakToe move:', error);
+        res.status(500).json({ error: 'Interner Serverfehler' });
+    }
+});
+
+// Get TikTakToe match state
+app.get('/games/tiktaktoe/matches/:matchId/state', async (req, res) => {
+    try {
+        const { matchId } = req.params;
+        const gamesData = await readGames();
+        let targetMatch = null;
+        
+        for (const [tId, tournament] of Object.entries(gamesData.games.tiktaktoe.tournaments)) {
+            if (tournament.bracket && tournament.bracket.rounds) {
+                for (const round of tournament.bracket.rounds) {
+                    const match = round.find(m => m.id === matchId);
+                    if (match) {
+                        targetMatch = match;
+                        break;
+                    }
+                }
+            }
+            if (targetMatch) break;
+        }
+        
+        if (!targetMatch) {
+            return res.status(404).json({ error: 'Match nicht gefunden' });
+        }
+        
+        // Initialize game state if not exists
+        if (!targetMatch.gameState) {
+            targetMatch.gameState = {
+                board: Array(9).fill(null),
+                currentPlayer: targetMatch.player1.walletAddress.toLowerCase(),
+                moves: [],
+                startedAt: new Date().toISOString()
+            };
+            await writeGames(gamesData);
+        }
+        
+        res.json({
+            gameState: targetMatch.gameState,
+            status: targetMatch.status,
+            winner: targetMatch.winner,
+            player1: targetMatch.player1,
+            player2: targetMatch.player2
+        });
+        
+    } catch (error) {
+        console.error('Error getting TikTakToe state:', error);
+        res.status(500).json({ error: 'Interner Serverfehler' });
+    }
+});
+
+// Helper function to check TikTakToe winner
+function checkTikTakToeWinner(board) {
+    const lines = [
+        [0, 1, 2], [3, 4, 5], [6, 7, 8], // rows
+        [0, 3, 6], [1, 4, 7], [2, 5, 8], // columns
+        [0, 4, 8], [2, 4, 6] // diagonals
+    ];
+    
+    for (const [a, b, c] of lines) {
+        if (board[a] && board[a] === board[b] && board[a] === board[c]) {
+            return board[a];
+        }
+    }
+    return null;
+}
+
 // Register for tournament
 app.post('/games/:gameId/tournaments/:tournamentId/register', async (req, res) => {
     try {
@@ -995,7 +1176,7 @@ app.post('/games/:gameId/tournaments', async (req, res) => {
 // Auto-Tournament Verwaltung
 const AUTO_TOURNAMENT_CONFIG = {
     sizes: [2, 4, 8, 16],
-    games: ['fifa', 'cod', 'chess'],
+    games: ['fifa', 'cod', 'chess', 'tiktaktoe'], // tiktaktoe hinzufügen
     cleanupIntervalHours: 24
 };
 
