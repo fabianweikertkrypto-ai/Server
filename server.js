@@ -808,153 +808,6 @@ app.post('/games/chess/matches/:matchId/result', async (req, res) => {
     }
 });
 
-app.post('/games/tiktaktoe/matches/:matchId/move', async (req, res) => {
-    try {
-        const { matchId } = req.params;
-        const { position, walletAddress } = req.body;
-        
-        const gamesData = await readGames();
-        let targetMatch = null;
-        let tournamentId = null;
-        
-        // Find the match in active tiktaktoe tournaments
-        for (const [tId, tournament] of Object.entries(gamesData.games.tiktaktoe.tournaments)) {
-            if (tournament.bracket && tournament.bracket.rounds) {
-                for (const round of tournament.bracket.rounds) {
-                    const match = round.find(m => m.id === matchId);
-                    if (match) {
-                        targetMatch = match;
-                        tournamentId = tId;
-                        break;
-                    }
-                }
-            }
-            if (targetMatch) break;
-        }
-        
-        if (!targetMatch) {
-            return res.status(404).json({ error: 'Match nicht gefunden' });
-        }
-        
-        if (targetMatch.status === 'completed') {
-            return res.status(400).json({ error: 'Spiel bereits beendet' });
-        }
-        
-        // Initialize game state if not exists
-        if (!targetMatch.gameState) {
-            targetMatch.gameState = {
-                board: Array(25).fill(null),  // 5x5 = 25 Felder
-                currentPlayer: targetMatch.player1.walletAddress.toLowerCase(),
-                moves: [],
-                startedAt: new Date().toISOString()
-            };
-        }
-        
-        const gameState = targetMatch.gameState;
-        const playerAddress = walletAddress.toLowerCase();
-        
-        // Validate turn
-        if (gameState.currentPlayer !== playerAddress) {
-            return res.status(400).json({ error: 'Nicht dein Zug' });
-        }
-        
-        // Validate position
-        if (position < 0 || position > 24 || gameState.board[position] !== null) {
-            return res.status(400).json({ error: 'Ungültiger Zug' });
-        }
-        
-        // Determine player symbol
-        const isPlayer1 = playerAddress === targetMatch.player1.walletAddress.toLowerCase();
-        const symbol = isPlayer1 ? 'X' : 'O';
-        
-        // Make move
-        gameState.board[position] = symbol;
-        gameState.moves.push({
-            player: playerAddress,
-            symbol: symbol,
-            position: position,
-            timestamp: new Date().toISOString()
-        });
-        
-        // Check for winner
-        const winner = checkTikTakToeWinner(gameState.board);
-        if (winner) {
-            targetMatch.status = 'completed';
-            targetMatch.winner = winner === 'X' ? targetMatch.player1 : targetMatch.player2;
-            targetMatch.completedAt = new Date().toISOString();
-            targetMatch.gameResult = winner;
-            
-            // Advance tournament
-            await checkAndAdvanceRound(gamesData, 'tiktaktoe', tournamentId, 
-                gamesData.games.tiktaktoe.tournaments[tournamentId].bracket.currentRound - 1);
-        } else if (gameState.board.every(cell => cell !== null)) {
-            // Draw - restart game
-            targetMatch.gameState = {
-                board: Array(25).fill(null),
-                currentPlayer: targetMatch.player1.walletAddress.toLowerCase(),
-                moves: [],
-                startedAt: new Date().toISOString()
-            };
-        } else {
-            // Switch players
-            gameState.currentPlayer = isPlayer1 ? 
-                targetMatch.player2.walletAddress.toLowerCase() : 
-                targetMatch.player1.walletAddress.toLowerCase();
-        }
-        
-        await writeGames(gamesData);
-        
-        res.json({ 
-            message: 'Zug erfolgreich',
-            gameState: targetMatch.gameState,
-            status: targetMatch.status,
-            winner: targetMatch.winner
-        });
-        
-    } catch (error) {
-        console.error('Error making TikTakToe move:', error);
-        res.status(500).json({ error: 'Interner Serverfehler' });
-    }
-});
-
-app.get('/games/chess/matches/my-active', async (req, res) => {
-    try {
-        const { walletAddress } = req.query;
-        
-        if (!walletAddress) {
-            return res.status(400).json({ error: 'Wallet-Adresse erforderlich' });
-        }
-        
-        const gamesData = await readGames();
-        
-        // Find active chess tournament
-        for (const [tournamentId, tournament] of Object.entries(gamesData.games.chess.tournaments)) {
-            if (tournament.status === 'started' && tournament.bracket?.rounds) {
-                for (const round of tournament.bracket.rounds) {
-                    for (const match of round) {
-                        if (match.status === 'pending' && 
-                            (match.player1.walletAddress.toLowerCase() === walletAddress.toLowerCase() || 
-                             match.player2.walletAddress.toLowerCase() === walletAddress.toLowerCase())) {
-                            return res.json({
-                                match: match,
-                                tournamentId: tournamentId,
-                                tournament: tournament
-                            });
-                        }
-                    }
-                }
-            }
-        }
-        
-        res.status(404).json({ error: 'Kein aktives Match gefunden' });
-        
-    } catch (error) {
-        console.error('Error finding active chess match:', error);
-        res.status(500).json({ error: 'Interner Serverfehler' });
-    }
-});
-
-// Make chess move
 app.post('/games/chess/matches/:matchId/move', async (req, res) => {
     try {
         const { matchId } = req.params;
@@ -1029,7 +882,8 @@ app.post('/games/chess/matches/:matchId/move', async (req, res) => {
         // Switch player
         gameState.currentPlayer = myColor === 'white' ? 'black' : 'white';
         
-        // Check game end conditions
+        // *** HIER IST DIE WICHTIGE ÄNDERUNG ***
+        // Check game end conditions AUTOMATISCH
         const gameEndCheck = checkChessGameEnd(gameState);
         
         if (gameEndCheck.ended) {
@@ -1038,13 +892,36 @@ app.post('/games/chess/matches/:matchId/move', async (req, res) => {
             targetMatch.gameResult = gameEndCheck.result;
             
             if (gameEndCheck.winner) {
+                // Automatisch Gewinner setzen
                 targetMatch.winner = gameEndCheck.winner === 'white' ? 
                     targetMatch.player1 : targetMatch.player2;
+                
+                // Automatisch Score setzen (1:0 für Gewinner)
+                if (gameEndCheck.winner === 'white') {
+                    targetMatch.score1 = 1;
+                    targetMatch.score2 = 0;
+                } else {
+                    targetMatch.score1 = 0;
+                    targetMatch.score2 = 1;
+                }
+                
+                console.log(`♟️ Schach-Match beendet: ${targetMatch.winner.platformUsername} gewinnt durch ${gameEndCheck.result}`);
+            } else {
+                // Unentschieden - Spiel neu starten
+                console.log(`♟️ Unentschieden durch ${gameEndCheck.result} - Spiel wird neu gestartet`);
+                targetMatch.gameState = initializeChessBoard();
+                targetMatch.gameState.players = {
+                    white: targetMatch.player1,
+                    black: targetMatch.player2
+                };
+                targetMatch.status = 'pending';
             }
             
-            // Advance tournament
-            await checkAndAdvanceRound(gamesData, 'chess', tournamentId, 
-                gamesData.games.chess.tournaments[tournamentId].bracket.currentRound - 1);
+            // Nur bei eindeutigem Gewinner: Turnier fortsetzen
+            if (gameEndCheck.winner) {
+                await checkAndAdvanceRound(gamesData, 'chess', tournamentId, 
+                    gamesData.games.chess.tournaments[tournamentId].bracket.currentRound - 1);
+            }
         }
         
         await writeGames(gamesData);
@@ -1053,11 +930,49 @@ app.post('/games/chess/matches/:matchId/move', async (req, res) => {
             success: true,
             gameState: targetMatch.gameState,
             status: targetMatch.status,
-            winner: targetMatch.winner
+            winner: targetMatch.winner,
+            gameResult: targetMatch.gameResult
         });
         
     } catch (error) {
         console.error('Error making chess move:', error);
+        res.status(500).json({ error: 'Interner Serverfehler' });
+    }
+});
+
+app.get('/games/chess/matches/my-active', async (req, res) => {
+    try {
+        const { walletAddress } = req.query;
+        
+        if (!walletAddress) {
+            return res.status(400).json({ error: 'Wallet-Adresse erforderlich' });
+        }
+        
+        const gamesData = await readGames();
+        
+        // Find active chess tournament
+        for (const [tournamentId, tournament] of Object.entries(gamesData.games.chess.tournaments)) {
+            if (tournament.status === 'started' && tournament.bracket?.rounds) {
+                for (const round of tournament.bracket.rounds) {
+                    for (const match of round) {
+                        if (match.status === 'pending' && 
+                            (match.player1.walletAddress.toLowerCase() === walletAddress.toLowerCase() || 
+                             match.player2.walletAddress.toLowerCase() === walletAddress.toLowerCase())) {
+                            return res.json({
+                                match: match,
+                                tournamentId: tournamentId,
+                                tournament: tournament
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        
+        res.status(404).json({ error: 'Kein aktives Match gefunden' });
+        
+    } catch (error) {
+        console.error('Error finding active chess match:', error);
         res.status(500).json({ error: 'Interner Serverfehler' });
     }
 });
@@ -1444,30 +1359,62 @@ function isInsufficientMaterial(board) {
 
 // Helper: Check game end
 function checkChessGameEnd(gameState) {
-    // Simplified - just check for king capture
-    let whiteKing = false;
-    let blackKing = false;
+    const currentColor = gameState.currentPlayer === 'white' ? 'w' : 'b';
+    const isInCheck = isKingInCheck(gameState.board, currentColor);
+    const hasLegalMovesAvailable = hasLegalMoves(gameState, currentColor);
     
-    for (let row = 0; row < 8; row++) {
-        for (let col = 0; col < 8; col++) {
-            const piece = gameState.board[row][col];
-            if (piece?.type === 'king') {
-                if (piece.color === 'w') whiteKing = true;
-                if (piece.color === 'b') blackKing = true;
-            }
+    if (!hasLegalMovesAvailable) {
+        if (isInCheck) {
+            // Checkmate - Der andere Spieler gewinnt
+            const winner = gameState.currentPlayer === 'white' ? 'black' : 'white';
+            return { 
+                ended: true, 
+                result: 'checkmate', 
+                winner: winner 
+            };
+        } else {
+            // Stalemate - Unentschieden
+            return { 
+                ended: true, 
+                result: 'stalemate', 
+                winner: null 
+            };
         }
     }
     
-    if (!whiteKing) {
-        return { ended: true, result: 'black_wins', winner: 'black' };
-    }
-    if (!blackKing) {
-        return { ended: true, result: 'white_wins', winner: 'white' };
+    // Check for insufficient material
+    if (isInsufficientMaterial(gameState.board)) {
+        return { 
+            ended: true, 
+            result: 'insufficient_material', 
+            winner: null 
+        };
     }
     
-    // Check for 50 moves without capture (simplified)
-    if (gameState.moves.length > 100) {
-        return { ended: true, result: 'draw', winner: null };
+    // Check 50-move rule (no capture or pawn move)
+    if (gameState.moves.length >= 100) {
+        let lastCapture = -1;
+        let lastPawnMove = -1;
+        
+        for (let i = gameState.moves.length - 1; i >= 0; i--) {
+            if (gameState.moves[i].captured) {
+                lastCapture = i;
+                break;
+            }
+            if (gameState.moves[i].piece === 'pawn') {
+                lastPawnMove = i;
+                break;
+            }
+        }
+        
+        const movesSinceProgress = gameState.moves.length - Math.max(lastCapture, lastPawnMove);
+        if (movesSinceProgress >= 100) {
+            return { 
+                ended: true, 
+                result: 'fifty_move_rule', 
+                winner: null 
+            };
+        }
     }
     
     return { ended: false };
