@@ -78,6 +78,18 @@ async function readGames() {
                     name: 'TikTakToe',
                     tournaments: {},
                     activeTournamentId: null
+                },
+                lol: {
+                    id: 'lol',
+                    name: 'League of Legends',
+                    tournaments: {},
+                    activeTournamentId: null
+                },
+                motogp: {
+                    id: 'motogp',
+                    name: 'MotoGP',
+                    tournaments: {},
+                    activeTournamentId: null
                 }
             }
         };
@@ -472,7 +484,9 @@ app.post('/user/register', async (req, res) => {
                         fifa: { tournaments: 0, wins: 0 },
                         cod: { tournaments: 0, wins: 0 },
 						chess: { tournaments: 0, wins: 0 },
-                        tiktaktoe: { tournaments: 0, wins: 0 } 
+                        tiktaktoe: { tournaments: 0, wins: 0 },
+                        lol: { tournaments: 0, wins: 0 },
+                        motogp: { tournaments: 0, wins: 0 }
                     }
                 },
                 createdAt: now,
@@ -1100,35 +1114,65 @@ function makeChessMove(gameState, from, to, promotion) {
     if (isKingInCheck(simulatedBoard, piece.color)) {
         return { valid: false, error: 'Zug würde eigenen König in Schach setzen' };
     }
+
+// Make Move
+const captured = gameState.board[toRow][toCol];
+gameState.board[toRow][toCol] = piece;
+gameState.board[fromRow][fromCol] = null;
+
+// En Passant: Entferne geschlagenen Bauern
+let enPassantCapture = null;
+if (piece.type === 'pawn' && toCol !== fromCol && !captured) {
+    // Dies ist En Passant
+    const capturedPawnRow = fromRow;
+    enPassantCapture = gameState.board[capturedPawnRow][toCol];
+    gameState.board[capturedPawnRow][toCol] = null;
+}
+
+// Rochade: Versetze Turm
+if (piece.type === 'king' && Math.abs(toCol - fromCol) === 2) {
+    const isKingside = toCol > fromCol;
+    const rookFromCol = isKingside ? 7 : 0;
+    const rookToCol = isKingside ? toCol - 1 : toCol + 1;
     
-    // Make move
-    const captured = gameState.board[toRow][toCol];
-    gameState.board[toRow][toCol] = piece;
-    gameState.board[fromRow][fromCol] = null;
-    
-    // Handle pawn promotion
-    if (piece.type === 'pawn' && (toRow === 0 || toRow === 7)) {
-        if (!promotion || !['queen', 'rook', 'bishop', 'knight'].includes(promotion)) {
-            promotion = 'queen'; // Default
-        }
-        gameState.board[toRow][toCol].type = promotion;
+    const rook = gameState.board[fromRow][rookFromCol];
+    gameState.board[fromRow][rookToCol] = rook;
+    gameState.board[fromRow][rookFromCol] = null;
+}
+
+// Reset en passant target
+gameState.enPassantTarget = null;
+
+// Set en passant target for pawn double move
+if (piece.type === 'pawn' && Math.abs(toRow - fromRow) === 2) {
+    gameState.enPassantTarget = [fromRow + (toRow > fromRow ? 1 : -1), toCol];
+}
+
+// Handle pawn promotion
+if (piece.type === 'pawn' && (toRow === 0 || toRow === 7)) {
+    if (!promotion || !['queen', 'rook', 'bishop', 'knight'].includes(promotion)) {
+        promotion = 'queen'; // Default
     }
-    
-    // Update castling rights if king or rook moved
-    if (piece.type === 'king') {
-        gameState.castlingRights[colorPrefix].kingside = false;
-        gameState.castlingRights[colorPrefix].queenside = false;
-    }
-    if (piece.type === 'rook') {
-        if (fromCol === 0) gameState.castlingRights[colorPrefix].queenside = false;
-        if (fromCol === 7) gameState.castlingRights[colorPrefix].kingside = false;
-    }
-    
-    return {
-        valid: true,
-        piece: piece.type,
-        captured: captured?.type
-    };
+    gameState.board[toRow][toCol].type = promotion;
+}
+
+// Update castling rights if king or rook moved
+if (piece.type === 'king') {
+    const colorPrefix = piece.color === 'w' ? 'white' : 'black';
+    gameState.castlingRights[colorPrefix].kingside = false;
+    gameState.castlingRights[colorPrefix].queenside = false;
+}
+if (piece.type === 'rook') {
+    const colorPrefix = piece.color === 'w' ? 'white' : 'black';
+    if (fromCol === 0) gameState.castlingRights[colorPrefix].queenside = false;
+    if (fromCol === 7) gameState.castlingRights[colorPrefix].kingside = false;
+}
+
+return {
+    valid: true,
+    piece: piece.type,
+    captured: captured?.type || enPassantCapture?.type
+};
 }
 
 function isValidCoordinate(row, col) {
@@ -1143,23 +1187,38 @@ function isValidPieceMove(gameState, piece, fromRow, fromCol, toRow, toCol) {
     
     switch (piece.type) {
         case 'pawn':
-            const direction = piece.color === 'w' ? -1 : 1;
-            const startRow = piece.color === 'w' ? 6 : 1;
-            
-            // Move forward
-            if (colDir === 0 && rowDir === direction && !gameState.board[toRow][toCol]) {
+        const direction = piece.color === 'w' ? -1 : 1;
+        const startRow = piece.color === 'w' ? 6 : 1;
+        const targetPiece = gameState.board[toRow][toCol];  // HINZUFÜGEN
+        
+        // Forward move (nur wenn kein Ziel)
+        if (colDir === 0 && rowDir === direction && !targetPiece) {
+            return true;
+        }
+        
+        // Initial two squares (Weg muss frei sein)
+        if (colDir === 0 && rowDir === 2 * direction && fromRow === startRow && !targetPiece) {
+            const middleRow = fromRow + direction;
+            if (!gameState.board[middleRow][fromCol]) {
                 return true;
             }
-            // Initial two-square move
-            if (colDir === 0 && rowDir === 2 * direction && fromRow === startRow && 
-                !gameState.board[toRow][toCol] && !gameState.board[fromRow + direction][fromCol]) {
+        }
+        
+        // Diagonal capture (NUR wenn gegnerische Figur da ist)
+        if (Math.abs(colDir) === 1 && rowDir === direction && targetPiece && targetPiece.color !== piece.color) {
+            return true;
+        }
+        
+        // En Passant
+        if (Math.abs(colDir) === 1 && rowDir === direction && !targetPiece) {
+            if (gameState.enPassantTarget && 
+                toRow === gameState.enPassantTarget[0] && 
+                toCol === gameState.enPassantTarget[1]) {
                 return true;
             }
-            // Capture diagonally
-            if (Math.abs(colDir) === 1 && rowDir === direction && gameState.board[toRow][toCol]) {
-                return true;
-            }
-            return false;
+        }
+        
+        return false;
             
         case 'knight':
             return (rowDiff === 2 && colDiff === 1) || (rowDiff === 1 && colDiff === 2);
@@ -1835,7 +1894,7 @@ app.post('/games/:gameId/tournaments', async (req, res) => {
 // Auto-Tournament Verwaltung
 const AUTO_TOURNAMENT_CONFIG = {
     sizes: [2, 4, 8, 16],
-    games: ['fifa', 'cod', 'chess', 'tiktaktoe'], // tiktaktoe hinzufügen
+    games: ['fifa', 'cod', 'chess', 'tiktaktoe', 'lol', 'motogp'], // tiktaktoe hinzufügen
     cleanupIntervalHours: 24
 };
 
