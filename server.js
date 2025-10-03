@@ -16,7 +16,7 @@ const corsOptions = {
         'http://localhost:8080', 
         'https://merry-klepon-890f17.netlify.app',
         'https://msigaminguniverse.com',
-        'https://chat-71oo.onrender.com' // falls vorhanden
+        'https://chat-11c8.onrender.com' // falls vorhanden
     ],
     credentials: true,
     optionsSuccessStatus: 200
