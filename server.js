@@ -10,12 +10,18 @@ const PORT = 3000;
 const GLOBAL_USERS_FILE = 'globalUsers.json';
 const GAMES_FILE = 'games.json';
 
+const MESSAGES_FILE = 'messages.json';
+const CHAT_USERS_FILE = 'chatUsers.json';
+
 const corsOptions = {
     origin: [
         'http://localhost:3000',
-        'http://localhost:8080', 
+        'http://localhost:8080',
+        'http://127.0.0.1:5500',
+        'http://127.0.0.1:5501',
         'https://merry-klepon-890f17.netlify.app',
         'https://msigaminguniverse.com',
+        'https://www.msigaminguniverse.com',
         'https://chat-11c8.onrender.com' // falls vorhanden
     ],
     credentials: true,
@@ -97,6 +103,44 @@ async function readGames() {
         console.log(`${GAMES_FILE} wurde erstellt`);
         return defaultData;
     }
+}
+
+async function readMessages() {
+    try {
+        const data = await fs.readFile(MESSAGES_FILE, 'utf8');
+        return JSON.parse(data);
+    } catch (error) {
+        const defaultData = { conversations: {} };
+        await writeMessages(defaultData);
+        console.log(`${MESSAGES_FILE} wurde erstellt`);
+        return defaultData;
+    }
+}
+
+async function writeMessages(data) {
+    await fs.writeFile(MESSAGES_FILE, JSON.stringify(data, null, 2), 'utf8');
+}
+
+async function readChatUsers() {
+    try {
+        const data = await fs.readFile(CHAT_USERS_FILE, 'utf8');
+        return JSON.parse(data);
+    } catch (error) {
+        const defaultData = { users: {} };
+        await writeChatUsers(defaultData);
+        console.log(`${CHAT_USERS_FILE} wurde erstellt`);
+        return defaultData;
+    }
+}
+
+async function writeChatUsers(data) {
+    await fs.writeFile(CHAT_USERS_FILE, JSON.stringify(data, null, 2), 'utf8');
+}
+
+// Generate conversation ID (alphabetically sorted wallet addresses)
+function getConversationId(wallet1, wallet2) {
+    const sorted = [wallet1.toLowerCase(), wallet2.toLowerCase()].sort();
+    return `${sorted[0]}_${sorted[1]}`;
 }
 
 async function createBackup() {
@@ -2369,6 +2413,176 @@ async function updateUserStats(walletAddress, gameId, isWinner) {
     }
 }
 
+// ========== CHAT ROUTES ==========
+
+// Get available users for chat
+app.get('/chat/available-users/:walletAddress', async (req, res) => {
+    try {
+        const { walletAddress } = req.params;
+        const userWallet = walletAddress.toLowerCase();
+
+        const globalUsers = await readGlobalUsers();
+        
+        // Filter out the requesting user
+        const availableUsers = Object.values(globalUsers.users)
+            .filter(user => user.walletAddress.toLowerCase() !== userWallet)
+            .map(user => ({
+                walletAddress: user.walletAddress,
+                platformUsername: user.platformUsername,
+                gamertags: user.gamertags
+            }));
+
+        // Get unread message counts
+        const messagesData = await readMessages();
+        const usersWithUnread = availableUsers.map(user => {
+            const convId = getConversationId(userWallet, user.walletAddress);
+            const conversation = messagesData.conversations[convId];
+            
+            let unreadCount = 0;
+            if (conversation?.messages) {
+                unreadCount = conversation.messages.filter(msg => 
+                    msg.to.toLowerCase() === userWallet && !msg.read
+                ).length;
+            }
+
+            return {
+                ...user,
+                unreadCount
+            };
+        });
+
+        // Sort by username
+        usersWithUnread.sort((a, b) => 
+            a.platformUsername.localeCompare(b.platformUsername)
+        );
+
+        res.json({
+            users: usersWithUnread,
+            count: usersWithUnread.length
+        });
+
+    } catch (error) {
+        console.error('Fehler beim Laden verfügbarer Chat-Benutzer:', error);
+        res.status(500).json({ error: 'Interner Serverfehler' });
+    }
+});
+
+// Get conversation
+app.get('/chat/conversation/:wallet1/:wallet2', async (req, res) => {
+    try {
+        const { wallet1, wallet2 } = req.params;
+        const conversationId = getConversationId(wallet1, wallet2);
+        
+        const messagesData = await readMessages();
+        const conversation = messagesData.conversations[conversationId];
+
+        if (!conversation) {
+            return res.json({
+                conversationId,
+                messages: [],
+                participants: [wallet1.toLowerCase(), wallet2.toLowerCase()]
+            });
+        }
+
+        // Mark messages as read for the requesting user
+        if (conversation.messages) {
+            conversation.messages.forEach(msg => {
+                if (msg.to.toLowerCase() === wallet1.toLowerCase()) {
+                    msg.read = true;
+                }
+            });
+            await writeMessages(messagesData);
+        }
+
+        res.json({
+            conversationId,
+            messages: conversation.messages || [],
+            participants: conversation.participants
+        });
+
+    } catch (error) {
+        console.error('Fehler beim Laden der Konversation:', error);
+        res.status(500).json({ error: 'Interner Serverfehler' });
+    }
+});
+
+// Send message
+app.post('/chat/send', async (req, res) => {
+    try {
+        const { from, to, message, messageType } = req.body;
+
+        if (!from || !to || !message) {
+            return res.status(400).json({ error: 'From, to und message sind erforderlich' });
+        }
+
+        const conversationId = getConversationId(from, to);
+        const messagesData = await readMessages();
+
+        if (!messagesData.conversations[conversationId]) {
+            messagesData.conversations[conversationId] = {
+                participants: [from.toLowerCase(), to.toLowerCase()],
+                messages: [],
+                createdAt: new Date().toISOString()
+            };
+        }
+
+        const newMessage = {
+            id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            from: from.toLowerCase(),
+            to: to.toLowerCase(),
+            message,
+            messageType: messageType || 'text',
+            timestamp: new Date().toISOString(),
+            read: false
+        };
+
+        // Add message and keep only last 3
+        messagesData.conversations[conversationId].messages.push(newMessage);
+        if (messagesData.conversations[conversationId].messages.length > 3) {
+            messagesData.conversations[conversationId].messages = 
+                messagesData.conversations[conversationId].messages.slice(-3);
+        }
+
+        messagesData.conversations[conversationId].lastMessageAt = new Date().toISOString();
+
+        await writeMessages(messagesData);
+
+        res.json({
+            message: 'Nachricht erfolgreich gesendet',
+            messageData: newMessage
+        });
+
+    } catch (error) {
+        console.error('Fehler beim Senden der Nachricht:', error);
+        res.status(500).json({ error: 'Interner Serverfehler' });
+    }
+});
+
+// Get unread message count
+app.get('/chat/unread/:walletAddress', async (req, res) => {
+    try {
+        const { walletAddress } = req.params;
+        const userWallet = walletAddress.toLowerCase();
+        
+        const messagesData = await readMessages();
+        let totalUnread = 0;
+
+        Object.values(messagesData.conversations).forEach(conversation => {
+            if (conversation.participants.includes(userWallet)) {
+                totalUnread += conversation.messages.filter(msg => 
+                    msg.to === userWallet && !msg.read
+                ).length;
+            }
+        });
+
+        res.json({ unreadCount: totalUnread });
+
+    } catch (error) {
+        console.error('Fehler beim Laden ungelesener Nachrichten:', error);
+        res.status(500).json({ error: 'Interner Serverfehler' });
+    }
+});
+
 // Health check
 app.get('/health', (req, res) => {
     res.json({ status: 'OK', timestamp: new Date().toISOString() });
@@ -2892,6 +3106,7 @@ app.listen(PORT, async () => {
     console.log(`🚀 Server läuft auf http://localhost:${PORT}`);
     console.log(`📊 Admin-Bereich: http://localhost:${PORT}/admin.html`);
     console.log(`🏆 Turnierbaum: http://localhost:${PORT}/tournament.html`);
+    console.log(`💬 Chat-System integriert`);
     
     // Load latest backup first
     console.log('📥 Versuche neuestes Backup zu laden...');
@@ -2903,6 +3118,11 @@ app.listen(PORT, async () => {
         await readGlobalUsers();
         await readGames();
     }
+    
+    // Chat-Dateien initialisieren
+    console.log('💬 Initialisiere Chat-Datenbanken...');
+    await readMessages();
+    await readChatUsers();
     
     // Backup nach dem Start erstellen
     console.log('💾 Erstelle Startup-Backup...');
