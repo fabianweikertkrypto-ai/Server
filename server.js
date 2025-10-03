@@ -59,7 +59,11 @@ async function readGames() {
         return JSON.parse(data);
     } catch (error) {
         // Datei existiert nicht - erstelle sie mit Standardstruktur
-        const defaultData = { 
+        const defaultData = {
+            prizePools: {
+                activeTournamentPool: 1,
+                completedTournamentPool: 1
+                    },
             games: {
                 fifa: {
                     id: 'fifa',
@@ -643,6 +647,24 @@ app.get('/user/:walletAddress', async (req, res) => {
 
     } catch (error) {
         console.error('Fehler beim Laden des Benutzers:', error);
+        res.status(500).json({ error: 'Interner Serverfehler' });
+    }
+});
+
+app.get('/prize-pools', async (req, res) => {
+    try {
+        const gamesData = await readGames();
+        
+        // Sicherstellen, dass Werte aktuell sind
+        await updatePrizePools(gamesData);
+        await writeGames(gamesData);
+        
+        res.json({
+            activeTournamentPool: gamesData.prizePools?.activeTournamentPool || 0,
+            completedTournamentPool: gamesData.prizePools?.completedTournamentPool || 0
+        });
+    } catch (error) {
+        console.error('Fehler beim Laden der Preispools:', error);
         res.status(500).json({ error: 'Interner Serverfehler' });
     }
 });
@@ -1805,6 +1827,8 @@ app.post('/games/:gameId/tournaments/:tournamentId/register', async (req, res) =
             tournament.status = 'started';
             tournament.startedAt = new Date().toISOString();
             tournament.bracket = bracket;
+
+            gamesData = await updatePrizePools(gamesData);
             
             console.log(`Tournament ${tournament.name} automatically started!`);
         }
@@ -2117,6 +2141,8 @@ app.post('/games/:gameId/tournaments/:tournamentId/start', async (req, res) => {
         tournament.status = 'started';
         tournament.startedAt = new Date().toISOString();
         tournament.bracket = bracket;
+
+        gamesData = await updatePrizePools(gamesData);
         
         await writeGames(gamesData);
         
@@ -2342,6 +2368,8 @@ async function checkAndAdvanceRound(gamesData, gameId, tournamentId, currentRoun
             tournament.status = 'finished';
             tournament.finishedAt = new Date().toISOString();
             tournament.winner = advancingPlayers[0];
+
+            gamesData = await updatePrizePools(gamesData);
             
             // Update global user stats
             await updateUserStats(advancingPlayers[0].walletAddress, gameId, true);
@@ -2411,6 +2439,37 @@ async function updateUserStats(walletAddress, gameId, isWinner) {
         
         await writeGlobalUsers(globalUsers);
     }
+}
+
+async function updatePrizePools(gamesData) {
+    let activeTournaments = 0;
+    let completedTournaments = 0;
+    
+    // Zähle alle Turniere über alle Spiele
+    Object.values(gamesData.games).forEach(game => {
+        if (game.tournaments) {
+            Object.values(game.tournaments).forEach(tournament => {
+                if (tournament.status === 'started' || tournament.status === 'registration') {
+                    activeTournaments++;
+                } else if (tournament.status === 'finished') {
+                    completedTournaments++;
+                }
+            });
+        }
+    });
+    
+    // Aktualisiere Preispools
+    if (!gamesData.prizePools) {
+        gamesData.prizePools = {
+            activeTournamentPool: 0,
+            completedTournamentPool: 0
+        };
+    }
+    
+    gamesData.prizePools.activeTournamentPool = activeTournaments * 1.00;
+    gamesData.prizePools.completedTournamentPool = completedTournaments * 0.50;
+    
+    return gamesData;
 }
 
 // ========== CHAT ROUTES ==========
