@@ -64,6 +64,22 @@ async function readGames() {
                 activeTournamentPool: 1,
                 completedTournamentPool: 1
                     },
+            tournamentStats: {  // NEU
+        running: {
+            size2: 0,
+            size4: 0,
+            size8: 0,
+            size16: 0,
+            sizeOther: 0
+        },
+        completed: {
+            size2: 0,
+            size4: 0,
+            size8: 0,
+            size16: 0,
+            sizeOther: 0
+        }
+    },
             games: {
                 fifa: {
                     id: 'fifa',
@@ -119,6 +135,46 @@ async function readMessages() {
         console.log(`${MESSAGES_FILE} wurde erstellt`);
         return defaultData;
     }
+}
+
+async function updateTournamentStats(gamesData) {
+    const stats = {
+        running: { size2: 0, size4: 0, size8: 0, size16: 0, sizeOther: 0 },
+        completed: { size2: 0, size4: 0, size8: 0, size16: 0, sizeOther: 0 }
+    };
+    
+    // Über alle Spiele iterieren
+    Object.values(gamesData.games).forEach(game => {
+        if (game.tournaments) {
+            Object.values(game.tournaments).forEach(tournament => {
+                const playerCount = tournament.autoStartPlayerCount || 
+                                  tournament.participants?.length || 0;
+                
+                let sizeKey;
+                if (playerCount === 2) sizeKey = 'size2';
+                else if (playerCount === 4) sizeKey = 'size4';
+                else if (playerCount === 8) sizeKey = 'size8';
+                else if (playerCount === 16) sizeKey = 'size16';
+                else sizeKey = 'sizeOther';
+                
+                // Nur 'started' und 'finished' zählen
+                if (tournament.status === 'started') {
+                    stats.running[sizeKey]++;
+                } else if (tournament.status === 'finished') {
+                    stats.completed[sizeKey]++;
+                }
+            });
+        }
+    });
+    
+    // Statistiken im gamesData Objekt aktualisieren
+    if (!gamesData.tournamentStats) {
+        gamesData.tournamentStats = stats;
+    } else {
+        Object.assign(gamesData.tournamentStats, stats);
+    }
+    
+    return gamesData;
 }
 
 async function writeMessages(data) {
@@ -660,6 +716,7 @@ app.get('/prize-pools', async (req, res) => {
         await writeGames(gamesData);
         
         res.json({
+            oneVsOnePool: gamesData.prizePools?.oneVsOnePool || 0,
             activeTournamentPool: gamesData.prizePools?.activeTournamentPool || 0,
             completedTournamentPool: gamesData.prizePools?.completedTournamentPool || 0
         });
@@ -1830,6 +1887,8 @@ app.post('/games/:gameId/tournaments/:tournamentId/register', async (req, res) =
 
             const updatedGamesData = await updatePrizePools(gamesData);
             Object.assign(gamesData, updatedGamesData);
+
+            await updateTournamentStats(gamesData);
             
             console.log(`Tournament ${tournament.name} automatically started!`);
         }
@@ -2145,6 +2204,8 @@ app.post('/games/:gameId/tournaments/:tournamentId/start', async (req, res) => {
 
         const updatedGamesData = await updatePrizePools(gamesData);
         Object.assign(gamesData, updatedGamesData);
+
+        await updateTournamentStats(gamesData);
         
         await writeGames(gamesData);
         
@@ -2373,6 +2434,8 @@ async function checkAndAdvanceRound(gamesData, gameId, tournamentId, currentRoun
 
             const updatedGamesData = await updatePrizePools(gamesData);
             Object.assign(gamesData, updatedGamesData);
+
+            await updateTournamentStats(gamesData);
             
             // Update global user stats
             await updateUserStats(advancingPlayers[0].walletAddress, gameId, true);
@@ -2445,34 +2508,62 @@ async function updateUserStats(walletAddress, gameId, isWinner) {
 }
 
 async function updatePrizePools(gamesData) {
-    let activeTournaments = 0;
-    let completedTournaments = 0;
+    let active2p = 0;
+    let active4p = 0;
+    let active8p = 0;
+    let active16p = 0;
     
-    // Zähle alle Turniere über alle Spiele
+    let completed2p = 0;
+    let completed4p = 0;
+    let completed8p = 0;
+    let completed16p = 0;
+    
+    // Zähle Turniere nach Größe und Status
     Object.values(gamesData.games).forEach(game => {
         if (game.tournaments) {
             Object.values(game.tournaments).forEach(tournament => {
+                const playerCount = tournament.autoStartPlayerCount || 
+                                  tournament.participants?.length || 0;
+                
                 if (tournament.status === 'started' || tournament.status === 'registration') {
-                    activeTournaments++;
+                    if (playerCount === 2) active2p++;
+                    else if (playerCount === 4) active4p++;
+                    else if (playerCount === 8) active8p++;
+                    else if (playerCount === 16) active16p++;
                 } else if (tournament.status === 'finished') {
-                    completedTournaments++;
+                    if (playerCount === 2) completed2p++;
+                    else if (playerCount === 4) completed4p++;
+                    else if (playerCount === 8) completed8p++;
+                    else if (playerCount === 16) completed16p++;
                 }
             });
         }
     });
     
-    // Aktualisiere Preispools direkt im Objekt
+    // Berechne Preispools
     if (!gamesData.prizePools) {
         gamesData.prizePools = {
+            oneVsOnePool: 0,
             activeTournamentPool: 0,
             completedTournamentPool: 0
         };
     }
     
-    gamesData.prizePools.activeTournamentPool = activeTournaments * 1.00;
-    gamesData.prizePools.completedTournamentPool = completedTournaments * 0.50;
+    // 1vs1 Pool: nur abgeschlossene 2-Spieler Turniere
+    gamesData.prizePools.oneVsOnePool = completed2p * 1.00;
     
-    // Kein return mehr nötig, da direkt modifiziert
+    // Aktiv Pool: nur 4, 8, 16 Spieler Turniere die aktiv sind
+    gamesData.prizePools.activeTournamentPool = 
+        (active4p * 3.00) + 
+        (active8p * 11.00) + 
+        (active16p * 29.00);
+    
+    // Abgeräumter Pool: nur 4, 8, 16 Spieler Turniere die finished sind
+    gamesData.prizePools.completedTournamentPool = 
+        (completed4p * 3.00) + 
+        (completed8p * 11.00) + 
+        (completed16p * 29.00);
+    
     return gamesData;
 }
 
@@ -2839,6 +2930,24 @@ app.post('/games/:gameId/tournaments/:tournamentId/matches/:matchId/reset', asyn
     }
 });
 
+app.get('/tournament-stats', async (req, res) => {
+    try {
+        const gamesData = await readGames();
+        
+        // Statistiken aktualisieren vor dem Senden
+        await updateTournamentStats(gamesData);
+        await writeGames(gamesData);
+        
+        res.json(gamesData.tournamentStats || {
+            running: { size2: 0, size4: 0, size8: 0, size16: 0, sizeOther: 0 },
+            completed: { size2: 0, size4: 0, size8: 0, size16: 0, sizeOther: 0 }
+        });
+    } catch (error) {
+        console.error('Fehler beim Laden der Turnierstatistiken:', error);
+        res.status(500).json({ error: 'Interner Serverfehler' });
+    }
+});
+
 // Cancel tournament (delete tournament and reset status)
 app.post('/games/:gameId/tournaments/:tournamentId/cancel', async (req, res) => {
     try {
@@ -3181,6 +3290,11 @@ app.listen(PORT, async () => {
         await readGlobalUsers();
         await readGames();
     }
+
+    const gamesData = await readGames();
+await updateTournamentStats(gamesData);
+await writeGames(gamesData);
+console.log('📊 Turnierstatistiken initialisiert');
     
     // Chat-Dateien initialisieren
     console.log('💬 Initialisiere Chat-Datenbanken...');
