@@ -1828,7 +1828,8 @@ app.post('/games/:gameId/tournaments/:tournamentId/register', async (req, res) =
             tournament.startedAt = new Date().toISOString();
             tournament.bracket = bracket;
 
-            gamesData = await updatePrizePools(gamesData);
+            const updatedGamesData = await updatePrizePools(gamesData);
+            Object.assign(gamesData, updatedGamesData);
             
             console.log(`Tournament ${tournament.name} automatically started!`);
         }
@@ -2142,7 +2143,8 @@ app.post('/games/:gameId/tournaments/:tournamentId/start', async (req, res) => {
         tournament.startedAt = new Date().toISOString();
         tournament.bracket = bracket;
 
-        gamesData = await updatePrizePools(gamesData);
+        const updatedGamesData = await updatePrizePools(gamesData);
+        Object.assign(gamesData, updatedGamesData);
         
         await writeGames(gamesData);
         
@@ -2369,7 +2371,8 @@ async function checkAndAdvanceRound(gamesData, gameId, tournamentId, currentRoun
             tournament.finishedAt = new Date().toISOString();
             tournament.winner = advancingPlayers[0];
 
-            gamesData = await updatePrizePools(gamesData);
+            const updatedGamesData = await updatePrizePools(gamesData);
+            Object.assign(gamesData, updatedGamesData);
             
             // Update global user stats
             await updateUserStats(advancingPlayers[0].walletAddress, gameId, true);
@@ -2458,7 +2461,7 @@ async function updatePrizePools(gamesData) {
         }
     });
     
-    // Aktualisiere Preispools
+    // Aktualisiere Preispools direkt im Objekt
     if (!gamesData.prizePools) {
         gamesData.prizePools = {
             activeTournamentPool: 0,
@@ -2469,6 +2472,7 @@ async function updatePrizePools(gamesData) {
     gamesData.prizePools.activeTournamentPool = activeTournaments * 1.00;
     gamesData.prizePools.completedTournamentPool = completedTournaments * 0.50;
     
+    // Kein return mehr nötig, da direkt modifiziert
     return gamesData;
 }
 
