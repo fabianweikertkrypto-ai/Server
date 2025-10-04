@@ -802,6 +802,36 @@ app.get('/leaderboard', async (req, res) => {
     }
 });
 
+app.get('/leaderboard/points', async (req, res) => {
+    try {
+        const limit = parseInt(req.query.limit) || 10;
+        const globalUsers = await readGlobalUsers();
+        
+        // Convert users object to array and sort by total points
+        const sortedUsers = Object.values(globalUsers.users)
+            .filter(user => user.stats && (user.stats.totalPoints || 0) > 0) // Only users with points
+            .sort((a, b) => (b.stats.totalPoints || 0) - (a.stats.totalPoints || 0)) // Sort descending by points
+            .slice(0, limit) // Limit results
+            .map((user, index) => ({
+                rank: index + 1,
+                platformUsername: user.platformUsername,
+                totalPoints: user.stats.totalPoints || 0,
+                totalWins: user.stats.totalWins || 0,
+                walletAddress: user.walletAddress.slice(0, 6) + '...' + user.walletAddress.slice(-4)
+            }));
+
+        res.json({
+            totalPlayers: Object.keys(globalUsers.users).length,
+            topPlayers: sortedUsers,
+            lastUpdated: new Date().toISOString()
+        });
+
+    } catch (error) {
+        console.error('Fehler beim Laden der Punkte-Rangliste:', error);
+        res.status(500).json({ error: 'Interner Serverfehler' });
+    }
+});
+
 app.get('/leaderboard/:gameId', async (req, res) => {
     try {
         const { gameId } = req.params;
@@ -2424,23 +2454,37 @@ async function checkAndAdvanceRound(gamesData, gameId, tournamentId, currentRoun
             tournament.bracket.playersWithByes = [];
         }
         
-        if (advancingPlayers.length === 1) {
-            // Tournament finished
-            tournament.bracket.isComplete = true;
-            tournament.bracket.winner = advancingPlayers[0];
-            tournament.status = 'finished';
-            tournament.finishedAt = new Date().toISOString();
-            tournament.winner = advancingPlayers[0];
+       if (advancingPlayers.length === 1) {
+    // Tournament finished
+    tournament.bracket.isComplete = true;
+    tournament.bracket.winner = advancingPlayers[0];
+    tournament.status = 'finished';
+    tournament.finishedAt = new Date().toISOString();
+    tournament.winner = advancingPlayers[0];
 
-            const updatedGamesData = await updatePrizePools(gamesData);
-            Object.assign(gamesData, updatedGamesData);
+    const updatedGamesData = await updatePrizePools(gamesData);
+    Object.assign(gamesData, updatedGamesData);
 
-            await updateTournamentStats(gamesData);
-            
-            // Update global user stats
-            await updateUserStats(advancingPlayers[0].walletAddress, gameId, true);
-            
-            console.log(`Turnier ${tournament.name} beendet! Gewinner: ${advancingPlayers[0].platformUsername}`);
+    await updateTournamentStats(gamesData);
+    
+    // GEÄNDERT: TurniergröÃče ermitteln
+    const tournamentSize = tournament.autoStartPlayerCount || tournament.participants?.length || 0;
+    
+    // GEÄNDERT: Winner Stats mit Punkten
+    await updateUserStats(advancingPlayers[0].walletAddress, gameId, true, tournamentSize, false);
+    
+    // NEU: 2. Platz ermitteln und Punkte geben
+    if (currentRound.length === 1) {
+        // Das letzte Match = Finale
+        const finalMatch = currentRound[0];
+        const secondPlace = finalMatch.winner.id === finalMatch.player1.id ? 
+            finalMatch.player2 : finalMatch.player1;
+        
+        await updateUserStats(secondPlace.walletAddress, gameId, false, tournamentSize, true);
+    }
+    
+    console.log(`Turnier ${tournament.name} beendet! Gewinner: ${advancingPlayers[0].platformUsername}`);
+    
             
             // Erstelle neues Auto-Turnier
             if (tournament.isAutoTournament) {
@@ -2488,16 +2532,43 @@ async function checkAndAdvanceRound(gamesData, gameId, tournamentId, currentRoun
 }
 
 // Update user statistics
-async function updateUserStats(walletAddress, gameId, isWinner) {
+async function updateUserStats(walletAddress, gameId, isWinner, tournamentSize = null, isSecondPlace = false) {
     const globalUsers = await readGlobalUsers();
     const userKey = walletAddress.toLowerCase();
     
     if (globalUsers.users[userKey]) {
         const user = globalUsers.users[userKey];
         
+        // Initialisiere totalPoints falls nicht vorhanden
+        if (user.stats.totalPoints === undefined) {
+            user.stats.totalPoints = 0;
+        }
+        
         if (isWinner) {
             user.stats.totalWins++;
             user.stats.gameStats[gameId].wins++;
+            
+            // Punkte für Turniersiege
+            if (tournamentSize) {
+                let points = 0;
+                if (tournamentSize === 2) points = 100;
+                else if (tournamentSize === 4) points = 300;
+                else if (tournamentSize === 8) points = 700;
+                else if (tournamentSize === 16) points = 1500;
+                
+                user.stats.totalPoints += points;
+            }
+        }
+        
+        // Halbe Punkte für 2. Platz
+        if (isSecondPlace && tournamentSize) {
+            let points = 0;
+            if (tournamentSize === 2) points = 50;
+            else if (tournamentSize === 4) points = 150;
+            else if (tournamentSize === 8) points = 350;
+            else if (tournamentSize === 16) points = 750;
+            
+            user.stats.totalPoints += points;
         }
         
         user.stats.gameStats[gameId].tournaments++;
