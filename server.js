@@ -2525,7 +2525,7 @@ async function updatePrizePools(gamesData) {
                 const playerCount = tournament.autoStartPlayerCount || 
                                   tournament.participants?.length || 0;
                 
-                if (tournament.status === 'started' || tournament.status === 'registration') {
+                if (tournament.status === 'started') {
                     if (playerCount === 2) active2p++;
                     else if (playerCount === 4) active4p++;
                     else if (playerCount === 8) active8p++;
