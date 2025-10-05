@@ -2080,8 +2080,8 @@ class AutoTournamentManager {
         }
     }
 
-    async ensureAutoTournaments() {
-    let gamesData = await readGames(); // Einmal laden
+ async ensureAutoTournaments() {
+    const gamesData = await readGames();
     let hasChanges = false;
 
     for (const gameId of AUTO_TOURNAMENT_CONFIG.games) {
@@ -2091,21 +2091,16 @@ class AutoTournamentManager {
             const existingTournament = this.findOpenAutoTournament(gamesData.games[gameId], size);
             
             if (!existingTournament) {
-                // Direkt im aktuellen gamesData erstellen
-                const tournament = this.buildAutoTournament(gameId, size);
-                gamesData.games[gameId].tournaments[tournament.id] = tournament;
+                await this.createAutoTournament(gameId, size);
                 hasChanges = true;
                 console.log(`Auto-Turnier erstellt: ${gameId} ${size}P`);
+                
+                // Kleine Verzögerung zwischen den Erstellungen
+                await new Promise(resolve => setTimeout(resolve, 100));
             }
         }
     }
-    
-    if (hasChanges) {
-        await writeGames(gamesData); // Einmal am Ende speichern
-        console.log(`✅ Auto-Turniere gespeichert`);
-    }
 }
-
     findOpenAutoTournament(gameData, size) {
         if (!gameData.tournaments) return null;
 
@@ -2170,7 +2165,7 @@ startCleanupScheduler() {
     // NEU: Prüfung alle 30 Minuten
     this.checkInterval = setInterval(() => {
         this.ensureAutoTournaments();
-    }, 1 * 60 * 1000);
+    }, 30 * 60 * 1000);
 }
 
     async cleanupOldTournaments() {
@@ -2514,19 +2509,23 @@ async function checkAndAdvanceRound(gamesData, gameId, tournamentId, currentRoun
     
             
             // Erstelle neues Auto-Turnier
-            if (tournament.isAutoTournament) {
-    // Erst alles speichern
-    await writeGames(gamesData);
-    
-    // Dann asynchron neues Turnier erstellen (ohne await!)
-    setImmediate(async () => {
-        try {
-            await autoTournamentManager.createAutoTournament(gameId, tournament.autoStartPlayerCount);
-            console.log(`Ersatz-Auto-Turnier erstellt für ${gameId} ${tournament.autoStartPlayerCount}P`);
-        } catch (error) {
-            console.error('Fehler beim Erstellen des Ersatz-Turniers:', error);
-        }
-    });
+          if (tournament.isAutoTournament) {
+    try {
+        // WICHTIG: Erst die aktuellen Daten speichern
+        await writeGames(gamesData);
+        
+        // Dann neues Auto-Turnier erstellen - aber erst nach einer kurzen Verzögerung
+        setTimeout(async () => {
+            try {
+                await autoTournamentManager.createAutoTournament(gameId, tournament.autoStartPlayerCount);
+                console.log(`Ersatz-Auto-Turnier erstellt für ${gameId} ${tournament.autoStartPlayerCount}P`);
+            } catch (error) {
+                console.error('Fehler beim Erstellen des Ersatz-Turniers:', error);
+            }
+        }, 1000); // 1 Sekunde Verzögerung
+    } catch (error) {
+        console.error('Fehler beim Erstellen des Ersatz-Turniers:', error);
+    }
 }
             
         } else if (currentRoundIndex + 1 === tournament.bracket.currentRound) {
