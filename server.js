@@ -59,70 +59,77 @@ async function readGames() {
         return JSON.parse(data);
     } catch (error) {
         // Datei existiert nicht - erstelle sie mit Standardstruktur
-        const defaultData = {
-            prizePools: {
-                activeTournamentPool: 1,
-                completedTournamentPool: 1
-                    },
-            tournamentStats: {  // NEU
-        running: {
-            size2: 0,
-            size4: 0,
-            size8: 0,
-            size16: 0,
-            sizeOther: 0
-        },
-        completed: {
-            size2: 0,
-            size4: 0,
-            size8: 0,
-            size16: 0,
-            sizeOther: 0
-        }
-    },
-            games: {
-                fifa: {
-                    id: 'fifa',
-                    name: 'FIFA',
-                    tournaments: {},
-                    activeTournamentId: null
-                },
-                cod: {
-                    id: 'cod',
-                    name: 'Call of Duty',
-                    tournaments: {},
-                    activeTournamentId: null
-                },
-                chess: {
-                    id: 'chess',
-                    name: 'Chess',
-                    tournaments: {},
-                    activeTournamentId: null
-                },
-                tiktaktoe: {
-                    id: 'tiktaktoe',
-                    name: 'TikTakToe',
-                    tournaments: {},
-                    activeTournamentId: null
-                },
-                lol: {
-                    id: 'lol',
-                    name: 'League of Legends',
-                    tournaments: {},
-                    activeTournamentId: null
-                },
-                motogp: {
-                    id: 'motogp',
-                    name: 'MotoGP',
-                    tournaments: {},
-                    activeTournamentId: null
-                }
-            }
-        };
-        await writeGames(defaultData);
-        console.log(`${GAMES_FILE} wurde erstellt`);
-        return defaultData;
+        // WICHTIG: Nicht automatisch erstellen wenn der Server startet
+        // und bereits Turniere existieren könnten
+        console.log(`${GAMES_FILE} nicht gefunden - wird bei Bedarf erstellt`);
+        throw error; // Fehler weiterleiten statt Standarddaten zu erstellen
     }
+}
+
+async function initializeGamesFile() {
+    const defaultData = {
+        prizePools: {
+            activeTournamentPool: 1,
+            completedTournamentPool: 1
+        },
+        tournamentStats: {
+            running: {
+                size2: 0,
+                size4: 0,
+                size8: 0,
+                size16: 0,
+                sizeOther: 0
+            },
+            completed: {
+                size2: 0,
+                size4: 0,
+                size8: 0,
+                size16: 0,
+                sizeOther: 0
+            }
+        },
+        games: {
+            fifa: {
+                id: 'fifa',
+                name: 'FIFA',
+                tournaments: {},
+                activeTournamentId: null
+            },
+            cod: {
+                id: 'cod',
+                name: 'Call of Duty',
+                tournaments: {},
+                activeTournamentId: null
+            },
+            chess: {
+                id: 'chess',
+                name: 'Chess',
+                tournaments: {},
+                activeTournamentId: null
+            },
+            tiktaktoe: {
+                id: 'tiktaktoe',
+                name: 'TikTakToe',
+                tournaments: {},
+                activeTournamentId: null
+            },
+            lol: {
+                id: 'lol',
+                name: 'League of Legends',
+                tournaments: {},
+                activeTournamentId: null
+            },
+            motogp: {
+                id: 'motogp',
+                name: 'MotoGP',
+                tournaments: {},
+                activeTournamentId: null
+            }
+        }
+    };
+    await writeGames(defaultData);
+    console.log(`${GAMES_FILE} wurde initialisiert`);
+    return defaultData;
 }
 
 async function readMessages() {
@@ -3377,9 +3384,16 @@ app.listen(PORT, async () => {
     const backupLoaded = await loadLatestBackupOnStartup();
     
     if (!backupLoaded) {
-        console.log('📋 Initialisiere Standard-Datenbanken...');
+        console.log('📋 Initialisiere Datenbanken...');
         await readGlobalUsers();
-        await readGames();
+        
+        // GEÄNDERT: Prüfe ob games.json existiert
+        try {
+            await readGames();
+        } catch (error) {
+            console.log('🎮 games.json nicht gefunden - erstelle neue Datei');
+            await initializeGamesFile();
+        }
     }
 
     const gamesData = await readGames();
@@ -3394,12 +3408,11 @@ app.listen(PORT, async () => {
     console.log('💾 Erstelle Startup-Backup...');
     await createBackup();
     
-    // Auto-Tournament System starten - ÄNDERN:
+    // Auto-Tournament System starten
     try {
         console.log('⚡ Starte Auto-Tournament System...');
         await autoTournamentManager.initialize();
         
-        // HINZUFÜGEN: Verifizierung
         const verifyData = await readGames();
         const autoTournamentCount = Object.values(verifyData.games).reduce((count, game) => 
             count + Object.values(game.tournaments || {}).filter(t => t.isAutoTournament && t.status === 'registration').length, 0);
