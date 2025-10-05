@@ -2100,6 +2100,13 @@ class AutoTournamentManager {
             }
         }
     }
+    
+    // HINZUFÜGEN: Nach allen Erstellungen die Daten neu laden
+    if (hasChanges) {
+        const updatedData = await readGames();
+        console.log(`✅ ${Object.values(updatedData.games).reduce((count, game) => 
+            count + Object.values(game.tournaments).filter(t => t.isAutoTournament && t.status === 'registration').length, 0)} Auto-Turniere aktiv`);
+    }
 }
 
     findOpenAutoTournament(gameData, size) {
@@ -2150,7 +2157,7 @@ class AutoTournamentManager {
     await writeGames(gamesData);
     
     console.log(`Neues Auto-Turnier erstellt: ${tournament.name}`);
-    return tournament;
+    return tournament; // <-- bereits vorhanden, gut
 }
 
     async cleanupOldTournaments() {
@@ -3347,7 +3354,6 @@ app.get('/admin/stats', async (req, res) => {
 });
 
 // Server start
-// Server start
 app.listen(PORT, async () => {
     console.log(`🚀 Server läuft auf http://localhost:${PORT}`);
     console.log(`📊 Admin-Bereich: http://localhost:${PORT}/admin.html`);
@@ -3359,30 +3365,39 @@ app.listen(PORT, async () => {
     const backupLoaded = await loadLatestBackupOnStartup();
     
     if (!backupLoaded) {
-        // Dateien beim Start sicherstellen (nur wenn kein Backup geladen wurde)
         console.log('📋 Initialisiere Standard-Datenbanken...');
         await readGlobalUsers();
         await readGames();
     }
 
     const gamesData = await readGames();
-await updateTournamentStats(gamesData);
-await writeGames(gamesData);
-console.log('📊 Turnierstatistiken initialisiert');
+    await updateTournamentStats(gamesData);
+    await writeGames(gamesData);
+    console.log('📊 Turnierstatistiken initialisiert');
     
-    // Chat-Dateien initialisieren
     console.log('💬 Initialisiere Chat-Datenbanken...');
     await readMessages();
     await readChatUsers();
     
-    // Backup nach dem Start erstellen
     console.log('💾 Erstelle Startup-Backup...');
     await createBackup();
     
-    // Auto-Tournament System starten
+    // Auto-Tournament System starten - ÄNDERN:
     try {
+        console.log('⚡ Starte Auto-Tournament System...');
         await autoTournamentManager.initialize();
-        console.log('⚡ Auto-Tournament System erfolgreich gestartet');
+        
+        // HINZUFÜGEN: Verifizierung
+        const verifyData = await readGames();
+        const autoTournamentCount = Object.values(verifyData.games).reduce((count, game) => 
+            count + Object.values(game.tournaments || {}).filter(t => t.isAutoTournament && t.status === 'registration').length, 0);
+        
+        console.log(`✅ Auto-Tournament System gestartet: ${autoTournamentCount} Auto-Turniere aktiv`);
+        
+        if (autoTournamentCount === 0) {
+            console.warn('⚠️ WARNUNG: Keine Auto-Turniere erstellt! Versuche erneut...');
+            await autoTournamentManager.ensureAutoTournaments();
+        }
     } catch (error) {
         console.error('❌ Fehler beim Starten des Auto-Tournament Systems:', error);
     }
