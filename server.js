@@ -1452,14 +1452,17 @@ function isKingInCheck(board, color) {
 }
 
 function hasLegalMoves(gameState, color) {
+    // Prüfe ob überhaupt legale Züge existieren
     for (let fromRow = 0; fromRow < 8; fromRow++) {
         for (let fromCol = 0; fromCol < 8; fromCol++) {
             const piece = gameState.board[fromRow][fromCol];
             if (piece && piece.color === color) {
                 for (let toRow = 0; toRow < 8; toRow++) {
                     for (let toCol = 0; toCol < 8; toCol++) {
+                        if (fromRow === toRow && fromCol === toCol) continue;
+                        
                         if (isValidPieceMove(gameState, piece, fromRow, fromCol, toRow, toCol)) {
-                            // Check path
+                            // Check path (außer Springer)
                             if (piece.type === 'knight' || !isPathBlocked(gameState.board, fromRow, fromCol, toRow, toCol)) {
                                 // Check target square
                                 const targetPiece = gameState.board[toRow][toCol];
