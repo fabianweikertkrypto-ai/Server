@@ -2155,6 +2155,23 @@ class AutoTournamentManager {
     console.log(`Neues Auto-Turnier erstellt: ${tournament.name}`);
     return tournament;
 }
+startCleanupScheduler() {
+    if (this.cleanupInterval) {
+        clearInterval(this.cleanupInterval);
+    }
+
+    this.cleanupOldTournaments();
+    
+    // Cleanup alle 6 Stunden
+    this.cleanupInterval = setInterval(() => {
+        this.cleanupOldTournaments();
+    }, 6 * 60 * 60 * 1000);
+    
+    // NEU: Prüfung alle 30 Minuten
+    this.checkInterval = setInterval(() => {
+        this.ensureAutoTournaments();
+    }, 1 * 60 * 1000);
+}
 
     async cleanupOldTournaments() {
         const gamesData = await readGames();
@@ -2200,13 +2217,17 @@ class AutoTournamentManager {
     }
 
     shutdown() {
-        if (this.cleanupInterval) {
-            clearInterval(this.cleanupInterval);
-            this.cleanupInterval = null;
-        }
-        this.isInitialized = false;
-        console.log('Auto-Tournament System heruntergefahren');
+    if (this.cleanupInterval) {
+        clearInterval(this.cleanupInterval);
+        this.cleanupInterval = null;
     }
+    if (this.checkInterval) { // NEU
+        clearInterval(this.checkInterval);
+        this.checkInterval = null;
+    }
+    this.isInitialized = false;
+    console.log('Auto-Tournament System heruntergefahren');
+}
 }
 
 const autoTournamentManager = new AutoTournamentManager();
