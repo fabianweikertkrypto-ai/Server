@@ -1280,6 +1280,16 @@ const captured = gameState.board[toRow][toCol];
 gameState.board[toRow][toCol] = piece;
 gameState.board[fromRow][fromCol] = null;
 
+if (captured && captured.type === 'rook') {
+    const colorPrefix = captured.color === 'w' ? 'white' : 'black';
+    if (toCol === 0 && toRow === (captured.color === 'w' ? 7 : 0)) {
+        gameState.castlingRights[colorPrefix].queenside = false;
+    }
+    if (toCol === 7 && toRow === (captured.color === 'w' ? 7 : 0)) {
+        gameState.castlingRights[colorPrefix].kingside = false;
+    }
+}
+
 // En Passant: Entferne geschlagenen Bauern
 let enPassantCapture = null;
 if (piece.type === 'pawn' && toCol !== fromCol && !captured) {
@@ -1395,7 +1405,52 @@ function isValidPieceMove(gameState, piece, fromRow, fromCol, toRow, toCol) {
                    (rowDiff === 0 && colDiff > 0);
             
         case 'king':
-            return rowDiff <= 1 && colDiff <= 1 && (rowDiff > 0 || colDiff > 0);
+    // Normale König-Bewegung (1 Feld in jede Richtung)
+    if (rowDiff <= 1 && colDiff <= 1 && (rowDiff > 0 || colDiff > 0)) {
+        return true;
+    }
+    
+    // Rochade-Validierung (2 Felder horizontal)
+    if (rowDiff === 0 && colDiff === 2) {
+        const colorPrefix = piece.color === 'w' ? 'white' : 'black';
+        const isKingside = toCol > fromCol;
+        const rookCol = isKingside ? 7 : 0;
+        const rookRow = fromRow;
+        
+        // 1. Prüfe Rochade-Rechte
+        if (isKingside && !gameState.castlingRights[colorPrefix].kingside) return false;
+        if (!isKingside && !gameState.castlingRights[colorPrefix].queenside) return false;
+        
+        // 2. Prüfe ob Turm noch auf Startposition steht
+        const rook = gameState.board[rookRow][rookCol];
+        if (!rook || rook.type !== 'rook' || rook.color !== piece.color) return false;
+        
+        // 3. König darf nicht im Schach stehen
+        if (isKingInCheck(gameState.board, piece.color)) return false;
+        
+        // 4. Prüfe ob Felder zwischen König und Turm frei sind
+        const direction = isKingside ? 1 : -1;
+        const fieldsToCheck = isKingside ? 2 : 3; // Kingside: f,g / Queenside: b,c,d
+        
+        for (let i = 1; i <= fieldsToCheck; i++) {
+            const checkCol = fromCol + (i * direction);
+            if (gameState.board[fromRow][checkCol]) return false; // Feld nicht frei
+        }
+        
+        // 5. König darf nicht durch oder auf ein angegriffenes Feld ziehen (nur erste 2 Felder)
+        for (let i = 1; i <= 2; i++) {
+            const checkCol = fromCol + (i * direction);
+            const testBoard = JSON.parse(JSON.stringify(gameState.board));
+            testBoard[fromRow][checkCol] = piece;
+            testBoard[fromRow][fromCol] = null;
+            
+            if (isKingInCheck(testBoard, piece.color)) return false;
+        }
+        
+        return true;
+    }
+    
+    return false;
             
         default:
             return false;
