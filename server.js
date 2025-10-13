@@ -1429,17 +1429,22 @@ function isValidPieceMove(gameState, piece, fromRow, fromCol, toRow, toCol) {
         if (isKingInCheck(gameState.board, piece.color)) return false;
         
         // 4. Prüfe ob Felder zwischen König und Turm frei sind
-        const direction = isKingside ? 1 : -1;
-        const fieldsToCheck = isKingside ? 2 : 3; // Kingside: f,g / Queenside: b,c,d
-        
-        for (let i = 1; i <= fieldsToCheck; i++) {
-            const checkCol = fromCol + (i * direction);
-            if (gameState.board[fromRow][checkCol]) return false; // Feld nicht frei
+        if (isKingside) {
+            // Kingside: f1 und g1 müssen frei sein
+            if (gameState.board[fromRow][fromCol + 1] || gameState.board[fromRow][fromCol + 2]) {
+                return false;
+            }
+        } else {
+            // Queenside: b1, c1 und d1 müssen frei sein
+            if (gameState.board[fromRow][fromCol - 1] || gameState.board[fromRow][fromCol - 2] || 
+                gameState.board[fromRow][fromCol - 3]) {
+                return false;
+            }
         }
         
-        // 5. König darf nicht durch oder auf ein angegriffenes Feld ziehen (nur erste 2 Felder)
+        // 5. König darf nicht durch oder auf ein angegriffenes Feld ziehen
         for (let i = 1; i <= 2; i++) {
-            const checkCol = fromCol + (i * direction);
+            const checkCol = fromCol + (isKingside ? i : -i);
             const testBoard = JSON.parse(JSON.stringify(gameState.board));
             testBoard[fromRow][checkCol] = piece;
             testBoard[fromRow][fromCol] = null;
@@ -1548,68 +1553,7 @@ function hasLegalMoves(gameState, color) {
     return false;
 }
 
-// Helper: Check game end (updated)
-function checkChessGameEnd(gameState) {
-    const currentColor = gameState.currentPlayer === 'white' ? 'w' : 'b';
-    const isInCheck = isKingInCheck(gameState.board, currentColor);
-    const hasLegalMovesAvailable = hasLegalMoves(gameState, currentColor);
-    
-    if (!hasLegalMovesAvailable) {
-        if (isInCheck) {
-            // Checkmate
-            const winner = gameState.currentPlayer === 'white' ? 'black' : 'white';
-            return { 
-                ended: true, 
-                result: 'checkmate', 
-                winner: winner 
-            };
-        } else {
-            // Stalemate
-            return { 
-                ended: true, 
-                result: 'stalemate', 
-                winner: null 
-            };
-        }
-    }
-    
-    // Check for insufficient material
-    if (isInsufficientMaterial(gameState.board)) {
-        return { 
-            ended: true, 
-            result: 'insufficient_material', 
-            winner: null 
-        };
-    }
-    
-    // Check 50-move rule (no capture or pawn move)
-    if (gameState.moves.length >= 100) {
-        let lastCapture = -1;
-        let lastPawnMove = -1;
-        
-        for (let i = gameState.moves.length - 1; i >= 0; i--) {
-            if (gameState.moves[i].captured) {
-                lastCapture = i;
-                break;
-            }
-            if (gameState.moves[i].piece === 'pawn') {
-                lastPawnMove = i;
-                break;
-            }
-        }
-        
-        const movesSinceProgress = gameState.moves.length - Math.max(lastCapture, lastPawnMove);
-        if (movesSinceProgress >= 100) {
-            return { 
-                ended: true, 
-                result: 'fifty_move_rule', 
-                winner: null 
-            };
-        }
-    }
-    
-    return { ended: false };
-}
+
 
 function isInsufficientMaterial(board) {
     const pieces = [];
