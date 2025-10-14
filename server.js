@@ -1436,10 +1436,10 @@ function isValidPieceMove(gameState, piece, fromRow, fromCol, toRow, toCol) {
             }
         } else {
             // Queenside: b1, c1 und d1 müssen frei sein
-            if (gameState.board[fromRow][fromCol - 1] || gameState.board[fromRow][fromCol - 2] || 
-                gameState.board[fromRow][fromCol - 3]) {
-                return false;
-            }
+            if (gameState.board[fromRow][3] || // d-Linie
+            gameState.board[fromRow][2]) { // c-Linie
+            return false;
+        }
         }
         
         // 5. König darf nicht durch oder auf ein angegriffenes Feld ziehen
