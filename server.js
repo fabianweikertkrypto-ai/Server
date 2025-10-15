@@ -890,6 +890,114 @@ app.get('/leaderboard/:gameId', async (req, res) => {
     }
 });
 
+app.get('/leaderboard/2p', async (req, res) => {
+    try {
+        const limit = parseInt(req.query.limit) || 10;
+        const globalUsers = await readGlobalUsers();
+        
+        // Zähle nur Siege aus 2er-Turnieren
+        const gamesData = await readGames();
+        const userWins2p = {};
+        
+        // Durchsuche alle abgeschlossenen 2er-Turniere
+        Object.values(gamesData.games).forEach(game => {
+            if (game.tournaments) {
+                Object.values(game.tournaments).forEach(tournament => {
+                    if (tournament.status === 'finished' && 
+                        tournament.autoStartPlayerCount === 2 && 
+                        tournament.winner) {
+                        const winnerWallet = tournament.winner.walletAddress.toLowerCase();
+                        userWins2p[winnerWallet] = (userWins2p[winnerWallet] || 0) + 1;
+                    }
+                });
+            }
+        });
+        
+        // Erstelle Rangliste
+        const sortedUsers = Object.entries(userWins2p)
+            .filter(([wallet, wins]) => wins > 0)
+            .map(([wallet, wins]) => {
+                const user = globalUsers.users[wallet];
+                return user ? {
+                    platformUsername: user.platformUsername,
+                    wins2p: wins,
+                    walletAddress: wallet.slice(0, 6) + '...' + wallet.slice(-4)
+                } : null;
+            })
+            .filter(user => user !== null)
+            .sort((a, b) => b.wins2p - a.wins2p)
+            .slice(0, limit)
+            .map((user, index) => ({
+                rank: index + 1,
+                ...user
+            }));
+
+        res.json({
+            topPlayers: sortedUsers,
+            lastUpdated: new Date().toISOString()
+        });
+
+    } catch (error) {
+        console.error('Fehler beim Laden der 2er-Rangliste:', error);
+        res.status(500).json({ error: 'Interner Serverfehler' });
+    }
+});
+
+// Leaderboard für Turniersiege (4er, 8er, 16er)
+app.get('/leaderboard/tournaments', async (req, res) => {
+    try {
+        const limit = parseInt(req.query.limit) || 10;
+        const globalUsers = await readGlobalUsers();
+        
+        // Zähle nur Siege aus 4er, 8er, 16er Turnieren
+        const gamesData = await readGames();
+        const userWinsTournaments = {};
+        
+        // Durchsuche alle abgeschlossenen Turniere (außer 2er)
+        Object.values(gamesData.games).forEach(game => {
+            if (game.tournaments) {
+                Object.values(game.tournaments).forEach(tournament => {
+                    if (tournament.status === 'finished' && 
+                        tournament.autoStartPlayerCount !== 2 && 
+                        tournament.autoStartPlayerCount >= 4 &&
+                        tournament.winner) {
+                        const winnerWallet = tournament.winner.walletAddress.toLowerCase();
+                        userWinsTournaments[winnerWallet] = (userWinsTournaments[winnerWallet] || 0) + 1;
+                    }
+                });
+            }
+        });
+        
+        // Erstelle Rangliste
+        const sortedUsers = Object.entries(userWinsTournaments)
+            .filter(([wallet, wins]) => wins > 0)
+            .map(([wallet, wins]) => {
+                const user = globalUsers.users[wallet];
+                return user ? {
+                    platformUsername: user.platformUsername,
+                    winsTournaments: wins,
+                    walletAddress: wallet.slice(0, 6) + '...' + wallet.slice(-4)
+                } : null;
+            })
+            .filter(user => user !== null)
+            .sort((a, b) => b.winsTournaments - a.winsTournaments)
+            .slice(0, limit)
+            .map((user, index) => ({
+                rank: index + 1,
+                ...user
+            }));
+
+        res.json({
+            topPlayers: sortedUsers,
+            lastUpdated: new Date().toISOString()
+        });
+
+    } catch (error) {
+        console.error('Fehler beim Laden der Turnier-Rangliste:', error);
+        res.status(500).json({ error: 'Interner Serverfehler' });
+    }
+});
+
 // Get available games for leaderboard
 app.get('/games/available', async (req, res) => {
     try {
