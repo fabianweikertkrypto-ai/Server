@@ -906,7 +906,7 @@ app.get('/leaderboard/2p', async (req, res) => {
                     if (tournament.status === 'finished' && 
                         tournament.autoStartPlayerCount === 2 && 
                         tournament.winner) {
-                        const winnerWallet = tournament.winner.walletAddress.toLowerCase();
+                        const winnerWallet = tournament.winner.walletAddress;
                         userWins2p[winnerWallet] = (userWins2p[winnerWallet] || 0) + 1;
                     }
                 });
@@ -966,7 +966,7 @@ app.get('/leaderboard/tournaments', async (req, res) => {
                         tournament.autoStartPlayerCount !== 2 && 
                         tournament.autoStartPlayerCount >= 4 &&
                         tournament.winner) {
-                        const winnerWallet = tournament.winner.walletAddress.toLowerCase();
+                        const winnerWallet = tournament.winner.walletAddress;
                         userWinsTournaments[winnerWallet] = (userWinsTournaments[winnerWallet] || 0) + 1;
                     }
                 });
