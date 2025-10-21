@@ -890,7 +890,7 @@ app.get('/leaderboard/:gameId', async (req, res) => {
     }
 });
 
-app.get('/leaderboard/2p', async (req, res) => {
+app.get('/leaderboard2p', async (req, res) => {
     try {
         const limit = parseInt(req.query.limit) || 10;
         const globalUsers = await readGlobalUsers();
@@ -949,7 +949,7 @@ app.get('/leaderboard/2p', async (req, res) => {
 });
 
 // Leaderboard für Turniersiege (4er, 8er, 16er)
-app.get('/leaderboard/tournaments', async (req, res) => {
+app.get('/leaderboardTournaments', async (req, res) => {
     try {
         const limit = parseInt(req.query.limit) || 10;
         const globalUsers = await readGlobalUsers();
