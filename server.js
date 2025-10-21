@@ -915,15 +915,20 @@ app.get('/leaderboard/2p', async (req, res) => {
         
         // Erstelle Rangliste
         const sortedUsers = Object.entries(userWins2p)
-            .filter(([wallet, wins]) => wins > 0)
-            .map(([wallet, wins]) => {
-                const user = globalUsers.users[wallet];
-                return user ? {
-                    platformUsername: user.platformUsername,
-                    wins2p: wins,
-                    walletAddress: wallet.slice(0, 6) + '...' + wallet.slice(-4)
-                } : null;
-            })
+    .filter(([wallet, wins]) => wins > 0)
+    .map(([wallet, wins]) => {
+        // GEÄ╷DERT: Suche mit toLowerCase
+        const userKey = Object.keys(globalUsers.users).find(
+            key => key.toLowerCase() === wallet.toLowerCase()
+        );
+        const user = userKey ? globalUsers.users[userKey] : null;
+        
+        return user ? {
+            platformUsername: user.platformUsername,
+            wins2p: wins,
+            walletAddress: wallet.slice(0, 6) + '...' + wallet.slice(-4)
+        } : null;
+    })
             .filter(user => user !== null)
             .sort((a, b) => b.wins2p - a.wins2p)
             .slice(0, limit)
@@ -970,15 +975,20 @@ app.get('/leaderboard/tournaments', async (req, res) => {
         
         // Erstelle Rangliste
         const sortedUsers = Object.entries(userWinsTournaments)
-            .filter(([wallet, wins]) => wins > 0)
-            .map(([wallet, wins]) => {
-                const user = globalUsers.users[wallet];
-                return user ? {
-                    platformUsername: user.platformUsername,
-                    winsTournaments: wins,
-                    walletAddress: wallet.slice(0, 6) + '...' + wallet.slice(-4)
-                } : null;
-            })
+    .filter(([wallet, wins]) => wins > 0)
+    .map(([wallet, wins]) => {
+        // GEÄ╷DERT: Suche mit toLowerCase
+        const userKey = Object.keys(globalUsers.users).find(
+            key => key.toLowerCase() === wallet.toLowerCase()
+        );
+        const user = userKey ? globalUsers.users[userKey] : null;
+        
+        return user ? {
+            platformUsername: user.platformUsername,
+            winsTournaments: wins,
+            walletAddress: wallet.slice(0, 6) + '...' + wallet.slice(-4)
+        } : null;
+    })
             .filter(user => user !== null)
             .sort((a, b) => b.winsTournaments - a.winsTournaments)
             .slice(0, limit)
