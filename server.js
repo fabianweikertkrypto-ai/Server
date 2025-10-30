@@ -1613,19 +1613,23 @@ function isKingInCheck(board, color) {
         if (kingRow !== undefined) break;
     }
     
-    if (kingRow === undefined) return true; // King not found (shouldn't happen)
+    if (kingRow === undefined) return true;
     
-    // Check if any opponent piece can attack king
     const opponentColor = color === 'w' ? 'b' : 'w';
     
     for (let row = 0; row < 8; row++) {
         for (let col = 0; col < 8; col++) {
             const piece = board[row][col];
             if (piece && piece.color === opponentColor) {
-                // Create temporary gameState for move validation
                 const tempState = { board: board };
                 if (isValidPieceMove(tempState, piece, row, col, kingRow, kingCol)) {
-                    if (piece.type === 'knight' || !isPathBlocked(board, row, col, kingRow, kingCol)) {
+                    // Springer ignoriert Blockierung
+                    if (piece.type === 'knight') {
+                        return true;
+                    }
+                    
+                    // Prüfe ob Weg blockiert ist
+                    if (!isPathBlocked(board, row, col, kingRow, kingCol)) {
                         return true;
                     }
                 }
